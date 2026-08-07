@@ -31,6 +31,7 @@ class Client(models.Model):
     google_slides_enabled = models.BooleanField(default=False)
     youtube_enabled = models.BooleanField(default=False)
     google_news_enabled = models.BooleanField(default=False)
+    outlook_enabled = models.BooleanField(default=False)
     
     # WhatsApp Config
     whatsapp_access_token = models.TextField(null=True, blank=True)
@@ -59,6 +60,7 @@ class Client(models.Model):
     google_slides_config = models.JSONField(default=dict, blank=True)
     youtube_config = models.JSONField(default=dict, blank=True)
     google_news_config = models.JSONField(default=dict, blank=True)
+    outlook_config = models.JSONField(default=dict, blank=True)
     settings = models.JSONField(default=dict, blank=True)
     
     # Enterprise Features
@@ -400,18 +402,44 @@ class Campaign(models.Model):
     STATUS_CHOICES = [
         ('DRAFT', 'Draft'),
         ('SENDING', 'Sending'),
+        ('PAUSED', 'Paused'),
         ('COMPLETED', 'Completed'),
         ('FAILED', 'Failed'),
     ]
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='campaigns')
     name = models.CharField(max_length=255)
-    template = models.ForeignKey(Template, on_delete=models.SET_NULL, null=True)
+    description = models.TextField(null=True, blank=True)
+    category = models.CharField(max_length=100, default='Marketing')
+    tags = models.JSONField(default=list, blank=True)
+    priority = models.CharField(max_length=20, default='NORMAL')
+    
+    # Message Content
+    template = models.ForeignKey(Template, on_delete=models.SET_NULL, null=True, blank=True)
+    message_body = models.TextField(null=True, blank=True)
+    attachments = models.JSONField(default=list, blank=True)
+
+    # Multi-Channel & Audience
+    platforms = models.JSONField(default=list, blank=True) # ['WHATSAPP', 'GMAIL', 'SMS', 'TELEGRAM', 'INSTAGRAM']
     audience_filter = models.CharField(max_length=50, default='ALL') # 'ALL', 'NEW', 'WON', etc.
+
+    # Delivery & Settings
+    sending_mode = models.CharField(max_length=50, default='IMMEDIATE') # IMMEDIATE, SCHEDULED, RECURRING
+    speed_mode = models.CharField(max_length=50, default='NORMAL') # ULTRA_FAST, FAST, NORMAL, SAFE
+    fallback_channels = models.JSONField(default=list, blank=True) # ['GMAIL', 'SMS']
+    retry_attempts = models.IntegerField(default=3)
+    
+    # Real-time Metrics
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
+    total_recipients = models.IntegerField(default=0)
+    total_queued = models.IntegerField(default=0)
     total_sent = models.IntegerField(default=0)
     total_delivered = models.IntegerField(default=0)
     total_read = models.IntegerField(default=0)
+    total_replied = models.IntegerField(default=0)
+    total_clicked = models.IntegerField(default=0)
     total_failed = models.IntegerField(default=0)
+    failed_recipients = models.JSONField(default=list, blank=True)
+
     scheduled_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -890,6 +918,150 @@ class GuideProgress(models.Model):
 
     def __str__(self):
         return f"{self.user.username} progress on {self.guide.title}"
+
+
+# ── ENTERPRISE EMAIL CENTER MODELS ──────────────────────────────────────────
+
+class EmailAccount(models.Model):
+    PROVIDER_CHOICES = [
+        ('gmail', 'Gmail / Google Workspace'),
+        ('outlook', 'Microsoft 365 / Outlook'),
+        ('exchange', 'Microsoft Exchange'),
+        ('imap', 'Custom IMAP / SMTP'),
+    ]
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='email_accounts')
+    provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES, default='gmail')
+    email_address = models.EmailField(max_length=255)
+    display_name = models.CharField(max_length=255, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    credentials = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.email_address} ({self.provider})"
+
+
+class EmailMessage(models.Model):
+    FOLDER_CHOICES = [
+        ('inbox', 'Inbox'),
+        ('sent', 'Sent'),
+        ('drafts', 'Drafts'),
+        ('scheduled', 'Scheduled'),
+        ('outbox', 'Outbox'),
+        ('spam', 'Spam'),
+        ('trash', 'Trash'),
+        ('archived', 'Archived'),
+        ('deleted', 'Deleted'),
+        ('important', 'Important'),
+        ('starred', 'Starred'),
+        ('snoozed', 'Snoozed'),
+    ]
+    STATUS_CHOICES = [
+        ('delivered', 'Delivered'),
+        ('opened', 'Opened'),
+        ('clicked', 'Clicked'),
+        ('replied', 'Replied'),
+        ('forwarded', 'Forwarded'),
+        ('archived', 'Archived'),
+        ('deleted', 'Deleted'),
+        ('scheduled', 'Scheduled'),
+        ('failed', 'Failed'),
+    ]
+    PRIORITY_CHOICES = [
+        ('high', 'High'),
+        ('normal', 'Normal'),
+        ('low', 'Low'),
+    ]
+
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='email_messages')
+    account = models.ForeignKey(EmailAccount, on_delete=models.SET_NULL, null=True, blank=True, related_name='messages')
+    folder = models.CharField(max_length=30, choices=FOLDER_CHOICES, default='inbox')
+    sender_email = models.EmailField(max_length=255)
+    sender_name = models.CharField(max_length=255, blank=True, default='')
+    to_recipients = models.JSONField(default=list, blank=True) # ['aditi@uwo24.com']
+    cc_recipients = models.JSONField(default=list, blank=True)
+    bcc_recipients = models.JSONField(default=list, blank=True)
+    subject = models.CharField(max_length=500)
+    body_text = models.TextField(blank=True, default='')
+    body_html = models.TextField(blank=True, default='')
+    attachments = models.JSONField(default=list, blank=True) # [{'name': 'document.pdf', 'size': '2.4 MB', 'url': '...'}]
+    
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='delivered')
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='normal')
+    is_starred = models.BooleanField(default=False)
+    is_read = models.BooleanField(default=False)
+    labels = models.JSONField(default=list, blank=True) # ['Sales', 'Support', 'Urgent']
+
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    recurring_rule = models.CharField(max_length=50, blank=True, default='') # daily, weekly, monthly
+    timezone = models.CharField(max_length=50, default='UTC')
+
+    assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_emails')
+    meeting_invite_data = models.JSONField(default=dict, blank=True) # {'title': '...', 'link': '...', 'status': 'accepted'}
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.folder.upper()}] {self.subject} - {self.sender_email}"
+
+
+class EmailAutoReplyRule(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='email_auto_replies')
+    name = models.CharField(max_length=255)
+    subject_pattern = models.CharField(max_length=255, blank=True, default='')
+    sender_pattern = models.CharField(max_length=255, blank=True, default='')
+    keyword_match = models.CharField(max_length=255, blank=True, default='')
+    
+    REPLY_TYPE_CHOICES = [
+        ('thank_you', 'Thank You Acknowledgment'),
+        ('ticket', 'Support Ticket Number'),
+        ('brochure', 'Sales Product Brochure'),
+        ('out_of_office', 'Holiday Out of Office'),
+        ('ai_generated', 'AI Generated Reply'),
+    ]
+    reply_type = models.CharField(max_length=30, choices=REPLY_TYPE_CHOICES, default='thank_you')
+    reply_subject = models.CharField(max_length=255, blank=True, default='')
+    reply_body = models.TextField()
+    attachment_file = models.CharField(max_length=500, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"AutoReply Rule: {self.name} ({self.reply_type})"
+
+
+class EmailAutomationWorkflow(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='email_automations')
+    name = models.CharField(max_length=255)
+    subject_keyword = models.CharField(max_length=255, blank=True, default='')
+    sender_domain = models.CharField(max_length=255, blank=True, default='')
+    has_attachments = models.BooleanField(default=False)
+    
+    assign_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='automated_email_workflows')
+    create_crm_lead = models.BooleanField(default=True)
+    send_auto_reply = models.BooleanField(default=True)
+    notify_admin = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Automation Workflow: {self.name}"
+
+
+class EmailTeamNote(models.Model):
+    message = models.ForeignKey(EmailMessage, on_delete=models.CASCADE, related_name='team_notes')
+    author = models.ForeignKey(User, on_delete=models.CASCADE)
+    note_text = models.TextField()
+    mentions = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Note by {self.author.username} on Msg #{self.message.id}"
+
 
 
 

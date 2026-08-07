@@ -12,6 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
 
 from ..serializers import ClientSerializer
 
@@ -260,6 +261,11 @@ class YouTubeAnalyticsView(APIView):
         if not client or not client.youtube_enabled:
             return Response({"error": "YouTube not connected"}, status=400)
 
+        cache_key = f"yt_analytics_{client.id}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
+
         access_token = _get_youtube_access_token(client)
         if not access_token:
             return Response({"error": "No valid access token"}, status=400)
@@ -282,16 +288,18 @@ class YouTubeAnalyticsView(APIView):
             logger.error(f"YouTube channel stats error: {e}")
             return Response({"error": str(e)}, status=500)
 
-        # Latest video
+        # Fetch uploaded videos list to accurately calculate real video count
         latest_video = None
+        actual_video_count = int(stats.get("videoCount", 0))
         try:
             if uploads_id:
                 pl_res = http_requests.get(
                     "https://www.googleapis.com/youtube/v3/playlistItems",
-                    params={"part": "snippet", "playlistId": uploads_id, "maxResults": 1},
+                    params={"part": "snippet", "playlistId": uploads_id, "maxResults": 10},
                     headers=headers
                 )
                 pl_items = pl_res.json().get("items", [])
+                actual_video_count = len(pl_items)
                 if pl_items:
                     v_snip = pl_items[0].get("snippet", {})
                     latest_video = {
@@ -303,7 +311,7 @@ class YouTubeAnalyticsView(APIView):
             if not latest_video:
                 vid_res = http_requests.get(
                     "https://www.googleapis.com/youtube/v3/search",
-                    params={"part": "snippet", "forMine": "true", "type": "video", "order": "date", "maxResults": 1},
+                    params={"part": "snippet", "forMine": "true", "type": "video", "order": "date", "maxResults": 10},
                     headers=headers
                 )
                 vid_data = vid_res.json()
@@ -316,18 +324,23 @@ class YouTubeAnalyticsView(APIView):
                         "thumbnail": v["snippet"].get("thumbnails", {}).get("medium", {}).get("url"),
                         "published_at": v["snippet"].get("publishedAt"),
                     }
-        except Exception:
-            pass
+                    actual_video_count = len(items)
+                else:
+                    actual_video_count = 0
+        except Exception as e:
+            logger.warning(f"Error checking YouTube uploads list: {e}")
 
-        return Response({
+        res_payload = {
             "channel_name": snippet.get("title", ""),
             "channel_thumbnail": snippet.get("thumbnails", {}).get("default", {}).get("url", ""),
             "channel_description": snippet.get("description", ""),
             "subscribers": int(stats.get("subscriberCount", 0)),
             "total_views": int(stats.get("viewCount", 0)),
-            "video_count": int(stats.get("videoCount", 0)),
+            "video_count": actual_video_count,
             "latest_video": latest_video,
-        })
+        }
+        cache.set(cache_key, res_payload, timeout=25)
+        return Response(res_payload)
 
 
 class YouTubeVideosView(APIView):
@@ -706,6 +719,7 @@ class YouTubeCheckNewView(APIView):
 class YouTubeUploadView(APIView):
     """Upload videos directly to YouTube from UWO Connect dashboard."""
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
         client = request.user.client
@@ -758,6 +772,7 @@ class YouTubeUploadView(APIView):
                 media_body=media
             )
             response = request_execution.execute()
+            cache.delete(f"yt_analytics_{client.id}")
             return Response({
                 "detail": "Video uploaded successfully",
                 "video_id": response.get("id"),

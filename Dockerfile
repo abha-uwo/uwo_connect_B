@@ -1,22 +1,46 @@
-# Official Python image use kar rahe hain
+# ==============================================================================
+# UWOConnect Backend - GCP Cloud Run / GKE Production Dockerfile
+# ==============================================================================
+
+# Build & Runtime Stage
 FROM python:3.10-slim
 
-# Environment variables set karna taaki Python output buffer na kare
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+# Prevent Python from writing .pyc files and buffer outputs
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8080
 
-# Container ke andar working directory set kar rahe hain
+# Install system dependencies (PostgreSQL, build-essential, curl)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Requirements file copy karke dependencies install karna
+# Upgrade pip and install Python dependencies
 COPY requirements.txt /app/
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir gunicorn daphne uvicorn
 
-# Baaki saara backend code copy kar rahe hain
+# Copy project source code
 COPY . /app/
 
-# Port 8080 expose kar rahe hain (jo aap apne server ke liye use kar rahe hain)
+# Create unprivileged non-root user for security
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Expose Cloud Run default port
 EXPOSE 8080
 
-# Server start karne ki command
-CMD ["gunicorn", "core.wsgi:application", "--bind", "0.0.0.0:8080", "--workers", "3"]
+# Entrypoint script for database migration & static files + server launch
+CMD exec gunicorn core.wsgi:application \
+    --bind 0.0.0.0:${PORT:-8080} \
+    --workers 4 \
+    --threads 8 \
+    --timeout 120 \
+    --access-logfile - \
+    --error-logfile -

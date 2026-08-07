@@ -103,7 +103,6 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_RENDERER_CLASSES': (
         'api.renderers.MongoJSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
     ),
 }
 

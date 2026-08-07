@@ -24,6 +24,9 @@ class FirebaseAuthentication(authentication.BaseAuthentication):
     """
 
     def authenticate(self, request):
+        if hasattr(request, '_request') and getattr(request._request, 'user', None) and request._request.user.is_authenticated:
+            return (request._request.user, None)
+
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
         if not auth_header.startswith('Bearer '):
             return None

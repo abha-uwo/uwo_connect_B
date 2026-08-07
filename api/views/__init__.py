@@ -20,4 +20,8 @@ from .monitoring_views import *
 from .youtube_views import *
 from .google_news_views import *
 from .guide_views import *
+from .outlook_views import *
+from .email_center_views import *
+from .webrtc_views import *
+
 

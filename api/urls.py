@@ -21,7 +21,12 @@ from .views import (
     PublicCalendarSlotsView, PublicCalendarBookView,
     ConversationViewSet, MonitoringStatsView, MonitoringAnalyticsView,
     GoogleNewsSettingsView, GoogleNewsFeedView, GoogleNewsAISummarizeView, GoogleNewsSendAlertView,
-    GuideViewSet, GuideSectionDetailView, GuideStepDetailView, GuideProgressView
+    GuideViewSet, GuideSectionDetailView, GuideStepDetailView, GuideProgressView,
+    OutlookConnectView, OutlookCallbackView, OutlookStatusView, OutlookSyncView, OutlookSendMailView, OutlookDisconnectView,
+    OutlookCalendarEventsView, OutlookTeamsView, OutlookContactsView, OutlookExcelView,
+    EmailAccountViewSet, EmailMessageViewSet, EmailAutoReplyViewSet, EmailAutomationWorkflowViewSet, EmailAnalyticsView,
+    WebRTCIceConfigView, WebRTCInitiateCallView, WebRTCCallSignalView, WebRTCHistoryView,
+    CallScheduleView, CallAISummaryView, CallAnalyticsView
 )
 
 router = DefaultRouter()
@@ -42,9 +47,14 @@ router.register(r'team/leaves', LeaveRequestViewSet, basename='team-leave')
 router.register(r'products', ProductViewSet, basename='product')
 router.register(r'orders', OrderViewSet, basename='order')
 router.register(r'guides', GuideViewSet, basename='guide')
+router.register(r'email/accounts', EmailAccountViewSet, basename='email-account')
+router.register(r'email/messages', EmailMessageViewSet, basename='email-message')
+router.register(r'email/auto-replies', EmailAutoReplyViewSet, basename='email-auto-reply')
+router.register(r'email/automations', EmailAutomationWorkflowViewSet, basename='email-automation')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('email/analytics/', EmailAnalyticsView.as_view(), name='email-analytics'),
     path('guides/progress/', GuideProgressView.as_view(), name='guide-progress-list'),
     path('guides/progress/<slug:slug>/', GuideProgressView.as_view(), name='guide-progress-detail'),
     path('guides/sections/<int:section_id>/', GuideSectionDetailView.as_view(), name='guide-section-detail'),
@@ -200,4 +210,42 @@ urlpatterns = [
     # Public endpoints
     path('public/calendar/<str:client_id>/slots', PublicCalendarSlotsView.as_view(), name='public-calendar-slots'),
     path('public/calendar/<str:client_id>/book', PublicCalendarBookView.as_view(), name='public-calendar-book'),
+
+    # Microsoft Outlook Integration
+    path('auth/outlook/connect', OutlookConnectView.as_view(), name='outlook-connect'),
+    path('auth/outlook/connect/', OutlookConnectView.as_view()),
+    path('auth/outlook/callback', OutlookCallbackView.as_view(), name='outlook-callback'),
+    path('auth/outlook/callback/', OutlookCallbackView.as_view()),
+    path('auth/outlook/status', OutlookStatusView.as_view(), name='outlook-status'),
+    path('auth/outlook/status/', OutlookStatusView.as_view()),
+    path('auth/outlook/sync', OutlookSyncView.as_view(), name='outlook-sync'),
+    path('auth/outlook/sync/', OutlookSyncView.as_view()),
+    path('auth/outlook/send-mail', OutlookSendMailView.as_view(), name='outlook-send-mail'),
+    path('auth/outlook/send-mail/', OutlookSendMailView.as_view()),
+    path('auth/outlook/disconnect', OutlookDisconnectView.as_view(), name='outlook-disconnect'),
+    path('auth/outlook/disconnect/', OutlookDisconnectView.as_view()),
+    path('auth/outlook/calendar/events', OutlookCalendarEventsView.as_view(), name='outlook-calendar-events'),
+    path('auth/outlook/calendar/events/', OutlookCalendarEventsView.as_view()),
+    path('auth/outlook/teams', OutlookTeamsView.as_view(), name='outlook-teams'),
+    path('auth/outlook/teams/', OutlookTeamsView.as_view()),
+    path('auth/outlook/contacts', OutlookContactsView.as_view(), name='outlook-contacts'),
+    path('auth/outlook/contacts/', OutlookContactsView.as_view()),
+    path('auth/outlook/excel', OutlookExcelView.as_view(), name='outlook-excel'),
+    path('auth/outlook/excel/', OutlookExcelView.as_view()),
+
+    # WebRTC & Calls Endpoints
+    path('webrtc/config', WebRTCIceConfigView.as_view(), name='webrtc-config'),
+    path('webrtc/config/', WebRTCIceConfigView.as_view()),
+    path('webrtc/call/initiate', WebRTCInitiateCallView.as_view(), name='webrtc-call-initiate'),
+    path('webrtc/call/initiate/', WebRTCInitiateCallView.as_view()),
+    path('webrtc/signal', WebRTCCallSignalView.as_view(), name='webrtc-signal'),
+    path('webrtc/signal/', WebRTCCallSignalView.as_view()),
+    path('webrtc/history', WebRTCHistoryView.as_view(), name='webrtc-history'),
+    path('webrtc/history/', WebRTCHistoryView.as_view()),
+    path('calls/schedule', CallScheduleView.as_view(), name='calls-schedule'),
+    path('calls/schedule/', CallScheduleView.as_view()),
+    path('calls/ai-summary', CallAISummaryView.as_view(), name='calls-ai-summary'),
+    path('calls/ai-summary/', CallAISummaryView.as_view()),
+    path('calls/analytics', CallAnalyticsView.as_view(), name='calls-analytics'),
+    path('calls/analytics/', CallAnalyticsView.as_view()),
 ]

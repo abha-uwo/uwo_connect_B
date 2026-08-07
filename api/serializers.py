@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Client, Automation, Workflow, GlobalSetting, Contact, Template, Campaign, SupportMessage, AuditLog, TeamInvite, KnowledgeDocument, TeamMessage, Product, Order, Project, Task, TaskComment, WorkReport, WorkApproval, TeamChannel, TeamChatMessage, Attendance, LeaveRequest, Message, Conversation, ConversationAuditLog, Guide, GuideSection, GuideStep, GuideProgress
+from .models import User, Client, Automation, Workflow, GlobalSetting, Contact, Template, Campaign, SupportMessage, AuditLog, TeamInvite, KnowledgeDocument, TeamMessage, Product, Order, Project, Task, TaskComment, WorkReport, WorkApproval, TeamChannel, TeamChatMessage, Attendance, LeaveRequest, Message, Conversation, ConversationAuditLog, Guide, GuideSection, GuideStep, GuideProgress, EmailAccount, EmailMessage, EmailAutoReplyRule, EmailAutomationWorkflow, EmailTeamNote
 from .repositories.contact_repository import ContactRepository
 from .repositories.workflow_repository import WorkflowRepository
 from .repositories.automation_repository import AutomationRepository
@@ -239,7 +239,6 @@ class TemplateSerializer(serializers.ModelSerializer):
 class CampaignSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
-    template = ObjectIdField(read_only=True)
 
     class Meta:
         model = Campaign
@@ -518,6 +517,62 @@ class GuideProgressSerializer(serializers.ModelSerializer):
         model = GuideProgress
         fields = '__all__'
         read_only_fields = ('user',)
+
+
+# ── ENTERPRISE EMAIL CENTER SERIALIZERS ────────────────────────────────────
+
+class EmailAccountSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    client = ObjectIdField(read_only=True)
+
+    class Meta:
+        model = EmailAccount
+        fields = '__all__'
+        read_only_fields = ('client', 'created_at')
+
+
+class EmailTeamNoteSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    author_name = serializers.CharField(source='author.first_name', read_only=True)
+
+    class Meta:
+        model = EmailTeamNote
+        fields = '__all__'
+        read_only_fields = ('author', 'created_at')
+
+
+class EmailMessageSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    client = ObjectIdField(read_only=True)
+    assigned_to_name = serializers.CharField(source='assigned_to.first_name', read_only=True)
+    team_notes = EmailTeamNoteSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = EmailMessage
+        fields = '__all__'
+        read_only_fields = ('client', 'created_at', 'updated_at')
+
+
+class EmailAutoReplyRuleSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    client = ObjectIdField(read_only=True)
+
+    class Meta:
+        model = EmailAutoReplyRule
+        fields = '__all__'
+        read_only_fields = ('client', 'created_at')
+
+
+class EmailAutomationWorkflowSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    client = ObjectIdField(read_only=True)
+    assign_user_name = serializers.CharField(source='assign_user.first_name', read_only=True)
+
+    class Meta:
+        model = EmailAutomationWorkflow
+        fields = '__all__'
+        read_only_fields = ('client', 'created_at')
+
 
 
 

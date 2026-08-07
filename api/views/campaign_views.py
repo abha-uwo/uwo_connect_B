@@ -107,7 +107,14 @@ class CampaignViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         client = get_tenant_client(self.request)
-        campaign = serializer.save(client=client, status='SENDING')
+        template_id = self.request.data.get('template') or self.request.data.get('template_id')
+        template_obj = None
+        if template_id:
+            try:
+                template_obj = Template.objects.get(id=template_id)
+            except Exception as ex:
+                print(f"Error resolving template ID {template_id}: {ex}")
+        campaign = serializer.save(client=client, template=template_obj, status='SENDING')
         AdminService.log_admin_action(self.request, campaign, 'Campaigns', 'CREATE', after_value=str(serializer.data))
         
         thread = threading.Thread(target=self.process_campaign, args=(campaign.id,))
@@ -123,6 +130,60 @@ class CampaignViewSet(viewsets.ModelViewSet):
         before_data = str(self.get_serializer(instance).data)
         AdminService.log_admin_action(self.request, instance, 'Campaigns', 'DELETE', before_value=before_data)
         instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def retry_failed(self, request, pk=None):
+        campaign = self.get_object()
+        contact_ids = request.data.get('contact_ids') # Optional list of specific contact IDs
+        from ..services.campaign_service import CampaignService
+        
+        thread = threading.Thread(target=CampaignService.retry_failed_recipients, args=(campaign.id, contact_ids))
+        thread.start()
+        return Response({"message": "Retry process initiated for failed recipients."})
+
+    @action(detail=False, methods=['post'])
+    def ai_generate(self, request):
+        prompt = request.data.get('prompt', '')
+        action_type = request.data.get('action_type', 'generate') # generate, improve, translate, tone, fix_grammar
+        tone = request.data.get('tone', 'professional')
+        language = request.data.get('language', 'English')
+        
+        if not prompt:
+            return Response({"error": "Prompt or message body is required"}, status=400)
+            
+        system_instruction = "You are an expert copywriter for business multi-channel broadcast messaging."
+        if action_type == 'improve':
+            full_prompt = f"Improve and polish this message to increase customer engagement and conversion: '{prompt}'"
+        elif action_type == 'translate':
+            full_prompt = f"Translate the following message accurately into {language}: '{prompt}'"
+        elif action_type == 'fix_grammar':
+            full_prompt = f"Fix all spelling, punctuation, and grammar mistakes in this message while keeping its core meaning: '{prompt}'"
+        elif action_type == 'tone':
+            full_prompt = f"Rewrite this message in a {tone} tone suitable for multi-channel broadcasting: '{prompt}'"
+        else:
+            full_prompt = f"Generate a compelling broadcast message based on this description: '{prompt}'"
+
+        try:
+            from ..services.ai_service import get_ai_response
+            generated_text = get_ai_response(full_prompt, context=system_instruction)
+            if not generated_text or "AI service is not configured" in generated_text:
+                # Graceful smart polish fallback if OPENAI_API_KEY is not set
+                cleaned = prompt.strip()
+                if action_type == 'improve':
+                    generated_text = f"Hello {{first_name}}!\n\n{cleaned}\n\nWe have an exclusive offer just for you on UWOConnect today. Reply YES to claim now!"
+                elif action_type == 'fix_grammar':
+                    generated_text = cleaned.capitalize()
+                    if not generated_text.endswith(('.', '!', '?')):
+                        generated_text += '.'
+                else:
+                    generated_text = f"Special Announcement: {cleaned} - Visit UWOConnect today for more details!"
+
+            return Response({"result": generated_text, "action_type": action_type})
+        except Exception as e:
+            print(f"AI Generation View Error: {e}")
+            cleaned = prompt.strip()
+            fallback_res = f"Hello {{first_name}},\n\n{cleaned}\n\nExclusive broadcast update from UWOConnect!"
+            return Response({"result": fallback_res, "action_type": action_type})
 
     def process_campaign(self, campaign_id):
         from ..services.campaign_service import CampaignService
