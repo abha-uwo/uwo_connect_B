@@ -388,15 +388,22 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
         data = serializer.data
 
         now = timezone.now()
+        user_map = {str(u.id): u for u in queryset}
         for item in data:
-            u_id = item.get('id')
-            user_obj = queryset.filter(id=u_id).first() if u_id else None
+            u_id = str(item.get('id'))
+            user_obj = user_map.get(u_id)
             if user_obj:
-                is_active = user_obj.is_online
-                if not is_active and user_obj.last_seen:
-                    if (now - user_obj.last_seen).total_seconds() < 300:
-                        is_active = True
+                is_active = getattr(user_obj, 'is_online', False)
+                last_seen = getattr(user_obj, 'last_seen', None)
+                if not is_active and last_seen:
+                    try:
+                        if (now - last_seen).total_seconds() < 300:
+                            is_active = True
+                    except Exception:
+                        pass
                 item['is_online'] = is_active
+            else:
+                item['is_online'] = False
 
         return Response(data)
 
