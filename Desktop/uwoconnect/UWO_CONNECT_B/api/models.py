@@ -40,7 +40,7 @@ class Client(models.Model):
     whatsapp_verify_token = models.CharField(max_length=100, null=True, blank=True)
     
     # Global Greeting Message
-    greeting_enabled = models.BooleanField(default=False)
+    greeting_enabled = models.BooleanField(default=True)
     greeting_message = models.TextField(null=True, blank=True)
     greeting_buttons = models.JSONField(default=list, blank=True)
     
