@@ -375,8 +375,8 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
         if getattr(user, 'client', None):
             try:
                 user.is_online = True
-                user.last_seen = timezone.now()
-                user.save(update_fields=['is_online', 'last_seen'])
+                user.last_active_at = timezone.now()
+                user.save(update_fields=['is_online', 'last_active_at'])
             except Exception:
                 pass
             return UserRepository.filter_users(client=user.client)
@@ -394,10 +394,10 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
             user_obj = user_map.get(u_id)
             if user_obj:
                 is_active = getattr(user_obj, 'is_online', False)
-                last_seen = getattr(user_obj, 'last_seen', None)
-                if not is_active and last_seen:
+                last_active = getattr(user_obj, 'last_active_at', None)
+                if not is_active and last_active:
                     try:
-                        if (now - last_seen).total_seconds() < 300:
+                        if (now - last_active).total_seconds() < 300:
                             is_active = True
                     except Exception:
                         pass
