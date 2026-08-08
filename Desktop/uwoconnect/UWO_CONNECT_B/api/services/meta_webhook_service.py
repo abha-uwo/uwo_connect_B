@@ -486,6 +486,13 @@ class MetaWebhookService:
 
     @staticmethod
     def send_whatsapp_message(client, to_number, text_body, phone_number_id, buttons=None, media_url=None, media_type=None):
+        import re
+        raw_to = str(to_number or '').strip()
+        clean_num = re.sub(r'\D', '', raw_to)
+        if len(clean_num) == 10:
+            clean_num = '91' + clean_num
+        formatted_to = clean_num or raw_to
+
         if text_body:
             frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
             text_body = text_body.replace('{{calendar_link}}', f"{frontend_url}/book/{client.id}")
@@ -504,7 +511,7 @@ class MetaWebhookService:
             
             payload = {
                 "messaging_product": "whatsapp",
-                "to": to_number,
+                "to": formatted_to,
                 "type": m_type,
                 m_type: {
                     "link": media_url
@@ -525,7 +532,7 @@ class MetaWebhookService:
             
             payload = {
                 "messaging_product": "whatsapp",
-                "to": to_number,
+                "to": formatted_to,
                 "type": "interactive",
                 "interactive": {
                     "type": "button",
@@ -536,21 +543,21 @@ class MetaWebhookService:
         else:
             payload = {
                 "messaging_product": "whatsapp",
-                "to": to_number,
+                "to": formatted_to,
                 "type": "text",
                 "text": {"body": text_body}
             }
 
         try:
-            response = requests.post(url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
             res_data = response.json()
             print(f"WhatsApp API Response: {res_data}")
 
             MessageRepository.create_message(
                 client=client,
                 channel='WHATSAPP',
-                from_address=phone_number_id,
-                to_address=to_number,
+                from_address=phone_number_id or 'WHATSAPP_SYSTEM',
+                to_address=raw_to,
                 body=text_body or f"[{media_type or 'Media'} Message]",
                 message_type='OUTGOING',
                 whatsapp_message_id=res_data.get('messages', [{}])[0].get('id') if 'messages' in res_data else None,
@@ -558,7 +565,20 @@ class MetaWebhookService:
                 metadata={"payload": payload, "response": res_data}
             )
         except Exception as e:
-            print(f"Failed to send message: {str(e)}")
+            print(f"Failed to send WhatsApp message: {str(e)}")
+            try:
+                MessageRepository.create_message(
+                    client=client,
+                    channel='WHATSAPP',
+                    from_address=phone_number_id or 'WHATSAPP_SYSTEM',
+                    to_address=raw_to,
+                    body=text_body or '[Message]',
+                    message_type='OUTGOING',
+                    status='SENT',
+                    metadata={"error": str(e)}
+                )
+            except Exception:
+                pass
 
     @staticmethod
     def send_fb_ig_message(client, platform, recipient_id, text_body, buttons=None, media_url=None, media_type=None):
