@@ -26,6 +26,7 @@ from .views import (
     OutlookCalendarEventsView, OutlookTeamsView, OutlookContactsView, OutlookExcelView,
     EmailAccountViewSet, EmailMessageViewSet, EmailAutoReplyViewSet, EmailAutomationWorkflowViewSet, EmailAnalyticsView,
     WebRTCIceConfigView, WebRTCInitiateCallView, WebRTCCallSignalView, WebRTCHistoryView,
+    WebRTCActiveCallCheckView, WebRTCCallActionView,
     CallScheduleView, CallAISummaryView, CallAnalyticsView, HealthCheckView
 )
 
@@ -240,6 +241,10 @@ urlpatterns = [
     path('webrtc/config/', WebRTCIceConfigView.as_view()),
     path('webrtc/call/initiate', WebRTCInitiateCallView.as_view(), name='webrtc-call-initiate'),
     path('webrtc/call/initiate/', WebRTCInitiateCallView.as_view()),
+    path('webrtc/call/active-check', WebRTCActiveCallCheckView.as_view(), name='webrtc-call-active-check'),
+    path('webrtc/call/active-check/', WebRTCActiveCallCheckView.as_view()),
+    path('webrtc/call/action', WebRTCCallActionView.as_view(), name='webrtc-call-action'),
+    path('webrtc/call/action/', WebRTCCallActionView.as_view()),
     path('webrtc/signal', WebRTCCallSignalView.as_view(), name='webrtc-signal'),
     path('webrtc/signal/', WebRTCCallSignalView.as_view()),
     path('webrtc/history', WebRTCHistoryView.as_view(), name='webrtc-history'),
