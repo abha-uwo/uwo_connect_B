@@ -9,7 +9,7 @@ steps:
 
   # 2. Build Frontend Docker Image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '--build-arg', 'NEXT_PUBLIC_API_URL=https://uwoconnectforb-743978421487.asia-south1.run.app', '-t', 'gcr.io/$PROJECT_ID/uwoconnect-frontend:$COMMIT_SHA', '-t', 'gcr.io/$PROJECT_ID/uwoconnect-frontend:latest', './UWO_CONECT_F-']
+    args: ['build', '--build-arg', 'NEXT_PUBLIC_API_URL=https://uwoconnectforrb-743928421487.asia-south1.run.app', '-t', 'gcr.io/$PROJECT_ID/uwoconnect-frontend:$COMMIT_SHA', '-t', 'gcr.io/$PROJECT_ID/uwoconnect-frontend:latest', './UWO_CONECT_F-']
 
   # 3. Push Backend Image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
