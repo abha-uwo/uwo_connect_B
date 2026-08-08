@@ -400,14 +400,44 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
-    def perform_create(self, serializer):
-        user = self.request.user
+    def create(self, request, *args, **kwargs):
+        user = request.user
         if not getattr(user, 'client', None):
-            raise serializers.ValidationError("No client associated with current account.")
-        raw_password = self.request.data.get('password') or 'UWOConnect123!'
+            return Response({"error": "No workspace client associated with current account."}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = request.data.copy()
+        email = data.get('email', '').strip().lower()
+        name = data.get('name') or data.get('full_name') or data.get('username') or (email.split('@')[0] if email else 'User')
+        raw_password = data.get('password') or 'UWOConnect123!'
+
+        if not email:
+            return Response({"error": "Email address is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        data['email'] = email
+        if 'username' not in data or not data['username']:
+            data['username'] = email
+        if 'first_name' not in data or not data['first_name']:
+            data['first_name'] = name
+
+        # Check if user already exists
+        existing_user = User.objects.filter(email__iexact=email).first() or User.objects.filter(username__iexact=email).first()
+        if existing_user:
+            existing_user.client = user.client
+            existing_user.status = 'APPROVED'
+            existing_user.department = data.get('department', existing_user.department or 'General')
+            existing_user.designation = data.get('designation', existing_user.designation or 'Team Member')
+            if raw_password:
+                existing_user.set_password(raw_password)
+            existing_user.save()
+            return Response(UserSerializer(existing_user).data, status=status.HTTP_200_OK)
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
         instance = serializer.save(client=user.client, status='APPROVED')
         instance.set_password(raw_password)
         instance.save()
+
+        return Response(UserSerializer(instance).data, status=status.HTTP_201_CREATED)
 
     def perform_destroy(self, instance):
         if instance == self.request.user:
