@@ -39,8 +39,9 @@ class WebRTCInitiateCallView(APIView):
 
     def post(self, request):
         cleanup_stale_sessions()
-        caller_name = request.data.get("caller", "Client / Abha")
+        caller_name = request.data.get("caller") or (request.user.username if getattr(request, 'user', None) and request.user.is_authenticated else "Client / Abha")
         target_name = request.data.get("recipient", "Team Member")
+        target_display = request.data.get("recipient_name") or target_name
         call_type = request.data.get("call_type", "voice")
         is_video = request.data.get("is_video", call_type == "video")
         session_id = f"call_sess_{uuid.uuid4().hex[:12]}"
@@ -48,7 +49,8 @@ class WebRTCInitiateCallView(APIView):
         ACTIVE_CALL_SESSIONS[session_id] = {
             "session_id": session_id,
             "caller": caller_name,
-            "recipient": target_name,
+            "recipient": str(target_name).lower(),
+            "recipient_display": target_display,
             "call_type": call_type,
             "is_video": is_video,
             "status": "RINGING",
@@ -59,7 +61,7 @@ class WebRTCInitiateCallView(APIView):
             "status": "initiated",
             "session_id": session_id,
             "caller": caller_name,
-            "recipient": target_name,
+            "recipient": target_display,
             "call_type": call_type,
             "is_video": is_video,
             "signal_state": "connecting",
@@ -69,24 +71,33 @@ class WebRTCInitiateCallView(APIView):
 
 class WebRTCActiveCallCheckView(APIView):
     """
-    Returns active ringing calls for real-time dashboard notifications.
+    Returns active ringing calls targeted for the logged-in user / team member.
     """
     permission_classes = [AllowAny]
 
     def get(self, request):
         cleanup_stale_sessions()
+        user_email = ""
+        user_name = ""
+        if getattr(request, 'user', None) and request.user.is_authenticated:
+            user_email = str(getattr(request.user, 'email', '') or '').lower()
+            user_name = str(getattr(request.user, 'username', '') or '').lower()
+
         active = None
         for sid, sess in list(ACTIVE_CALL_SESSIONS.items()):
             if sess.get("status") == "RINGING":
-                active = sess
-                break
+                recip = str(sess.get("recipient", "")).lower()
+                # Match if target is wildcard OR matches user's email / username
+                if not user_email or recip in ['all', 'team member', '', user_email, user_name] or user_email in recip or recip in user_email:
+                    active = sess
+                    break
 
         if active:
             return Response({
                 "active_call": True,
                 "session_id": active["session_id"],
                 "caller": active["caller"],
-                "recipient": active["recipient"],
+                "recipient": active.get("recipient_display", active["recipient"]),
                 "is_video": active["is_video"],
                 "call_type": active["call_type"]
             }, status=status.HTTP_200_OK)
