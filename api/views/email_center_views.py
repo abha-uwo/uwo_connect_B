@@ -75,13 +75,25 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
         return qs
 
     def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
         client = getattr(request.user, 'client', None)
         
-        # Seed default sample enterprise emails if list is empty
-        if client and not EmailMessage.objects.filter(client=client).exists():
-            self._seed_sample_emails(client)
-            return super().list(request, *args, **kwargs)
+        if client:
+            from ..services.outlook_service import sync_outlook_emails
+            from ..services.gmail_service import sync_incoming_gmails
+            
+            try:
+                if client.outlook_enabled:
+                    sync_outlook_emails(client)
+            except Exception as e:
+                logger.error(f"Error syncing Outlook emails: {e}")
+                
+            try:
+                if client.gmail_enabled:
+                    sync_incoming_gmails(client)
+            except Exception as e:
+                logger.error(f"Error syncing Gmail emails: {e}")
+                
+        response = super().list(request, *args, **kwargs)
 
         # Calculate folder counts
         folders = ['inbox', 'sent', 'drafts', 'scheduled', 'outbox', 'spam', 'trash', 'archived', 'deleted', 'important', 'starred', 'snoozed']
@@ -95,67 +107,7 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
             'folder_counts': counts
         })
 
-    def _seed_sample_emails(self, client):
-        acc, _ = EmailAccount.objects.get_or_create(
-            client=client,
-            email_address=getattr(client, 'email', 'abha@uwo24.com'),
-            defaults={'provider': 'outlook', 'display_name': 'Abha Jatav'}
-        )
-        sample_msgs = [
-            {
-                'folder': 'inbox',
-                'sender_email': 'aditi@uwo24.com',
-                'sender_name': 'Aditi Sharma',
-                'to_recipients': ['abha@uwo24.com'],
-                'subject': 'Project Demo & Requirements Update for UWOConnect',
-                'body_text': 'Hi Abha,\n\nWe have updated the multi-channel broadcast module requirements. Please check attached documents.',
-                'body_html': '<p>Hi Abha,</p><p>We have updated the multi-channel broadcast module requirements. Please check attached documents.</p>',
-                'attachments': [{'name': 'requirements_v2.pdf', 'size': '1.8 MB', 'url': '#'}],
-                'status': 'delivered',
-                'priority': 'high',
-                'is_read': False,
-                'labels': ['Sales', 'Urgent'],
-                'meeting_invite_data': {
-                    'title': 'Product Demo with Acme Corp',
-                    'provider': 'Microsoft Teams',
-                    'meeting_link': 'https://teams.microsoft.com',
-                    'date': '2026-08-07',
-                    'time': '10:00 AM',
-                    'attendees': ['aditi@uwo24.com', 'abha@uwo24.com'],
-                    'status': 'accepted'
-                }
-            },
-            {
-                'folder': 'inbox',
-                'sender_email': 'support@techcorp.in',
-                'sender_name': 'TechCorp Support',
-                'to_recipients': ['abha@uwo24.com'],
-                'subject': 'Support Ticket #8492: API Gateway Integration',
-                'body_text': 'Hello, Your support ticket #8492 has been received and assigned to engineer.',
-                'body_html': '<p>Hello,</p><p>Your support ticket <b>#8492</b> has been received and assigned to engineer.</p>',
-                'status': 'opened',
-                'priority': 'normal',
-                'is_read': True,
-                'labels': ['Support']
-            },
-            {
-                'folder': 'scheduled',
-                'sender_email': 'abha@uwo24.com',
-                'sender_name': 'Abha Jatav',
-                'to_recipients': ['rahul@acme.com'],
-                'subject': 'Scheduled Broadcast & Product Brochure Demo',
-                'body_text': 'Dear Rahul, Here is your requested product brochure for UWOConnect SaaS Platform.',
-                'body_html': '<p>Dear Rahul,</p><p>Here is your requested product brochure for UWOConnect SaaS Platform.</p>',
-                'status': 'scheduled',
-                'priority': 'normal',
-                'is_read': True,
-                'labels': ['Sales', 'Pending'],
-                'scheduled_at': '2026-08-08T09:00:00Z',
-                'recurring_rule': 'Weekly'
-            }
-        ]
-        for data in sample_msgs:
-            EmailMessage.objects.create(client=client, account=acc, **data)
+
 
     @action(detail=True, methods=['post'])
     def toggle_star(self, request, pk=None):
@@ -272,3 +224,123 @@ class EmailAnalyticsView(APIView):
                 {'name': 'Aditi Sharma', 'replies': 36, 'avg_time': '16m'}
             ]
         })
+
+
+class EmailComposeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        client = getattr(request.user, 'client', None)
+        if not client:
+            return Response({'error': 'Client not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        action = request.data.get('action', 'send') # send, draft, schedule
+        provider = request.data.get('provider', 'outlook')
+        to = request.data.get('to')
+        subject = request.data.get('subject')
+        body = request.data.get('body')
+
+        if not to or not subject:
+            return Response({'error': 'to and subject are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get or Create EmailAccount for the sender
+        email_address = ''
+        if provider == 'outlook' and client.outlook_config:
+            email_address = client.outlook_config.get('email_address', '')
+        elif provider == 'gmail' and client.gmail_config:
+            email_address = client.gmail_config.get('email_address', '')
+            
+        account, _ = EmailAccount.objects.get_or_create(
+            client=client,
+            provider=provider,
+            email_address=email_address,
+            defaults={'display_name': email_address}
+        )
+
+        msg = EmailMessage.objects.create(
+            client=client,
+            account=account,
+            sender_email=email_address,
+            to_recipients=[to],
+            subject=subject,
+            body_text=body,
+            body_html=body,
+            status='delivered',
+            priority='normal',
+            is_read=True,
+            folder='sent',
+            provider=provider
+        )
+
+        if action == 'draft':
+            msg.folder = 'drafts'
+            msg.status = 'draft'
+            msg.save()
+            return Response({'detail': 'Email saved as draft', 'id': msg.id})
+
+        elif action == 'schedule':
+            scheduled_date = request.data.get('scheduled_date')
+            scheduled_time = request.data.get('scheduled_time')
+            
+            # Simple scheduled saving
+            msg.folder = 'scheduled'
+            msg.status = 'scheduled'
+            msg.metadata = {'scheduled_date': scheduled_date, 'scheduled_time': scheduled_time}
+            msg.save()
+            return Response({'detail': f'Email scheduled for {scheduled_date} {scheduled_time}', 'id': msg.id})
+
+        elif action == 'send':
+            # Send using appropriate provider
+            sent_success = False
+            error_msg = ''
+            if provider == 'outlook':
+                if not client.outlook_enabled:
+                    return Response({'error': 'Outlook is not connected'}, status=status.HTTP_400_BAD_REQUEST)
+                # The logic from OutlookSendMailView can be replicated, but we can just use requests here
+                config = client.outlook_config or {}
+                access_token = config.get('access_token')
+                if access_token and not access_token.startswith('simulated_'):
+                    import requests
+                    graph_url = 'https://graph.microsoft.com/v1.0/me/sendMail'
+                    payload = {
+                        'message': {
+                            'subject': subject,
+                            'body': {'contentType': 'Text', 'content': body},
+                            'toRecipients': [{'emailAddress': {'address': to}}]
+                        },
+                        'saveToSentItems': 'true'
+                    }
+                    try:
+                        res = requests.post(graph_url, json=payload, headers={'Authorization': f'Bearer {access_token}'}, timeout=10)
+                        if res.status_code in [200, 202]:
+                            sent_success = True
+                        else:
+                            error_msg = res.text
+                    except Exception as e:
+                        error_msg = str(e)
+                else:
+                    sent_success = True # simulated success for demo
+            
+            elif provider == 'gmail':
+                if not client.gmail_enabled:
+                    return Response({'error': 'Gmail is not connected'}, status=status.HTTP_400_BAD_REQUEST)
+                from .gmail_views import send_gmail_message
+                try:
+                    send_gmail_message(client, to, body, subject)
+                    sent_success = True
+                except Exception as e:
+                    error_msg = str(e)
+            
+            if sent_success:
+                msg.folder = 'sent'
+                msg.status = 'delivered'
+                msg.save()
+                return Response({'detail': 'Email sent successfully', 'id': msg.id})
+            else:
+                msg.folder = 'failed'
+                msg.status = 'failed'
+                msg.metadata = {'error': error_msg}
+                msg.save()
+                return Response({'error': f'Failed to send email: {error_msg}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)

@@ -24,9 +24,10 @@ from .views import (
     GuideViewSet, GuideSectionDetailView, GuideStepDetailView, GuideProgressView,
     OutlookConnectView, OutlookCallbackView, OutlookStatusView, OutlookSyncView, OutlookSendMailView, OutlookDisconnectView,
     OutlookCalendarEventsView, OutlookTeamsView, OutlookContactsView, OutlookExcelView,
-    EmailAccountViewSet, EmailMessageViewSet, EmailAutoReplyViewSet, EmailAutomationWorkflowViewSet, EmailAnalyticsView,
+    EmailAccountViewSet, EmailMessageViewSet, EmailAutoReplyViewSet, EmailAutomationWorkflowViewSet, EmailAnalyticsView, EmailComposeView,
     WebRTCIceConfigView, WebRTCInitiateCallView, WebRTCCallSignalView, WebRTCHistoryView,
-    CallScheduleView, CallAISummaryView, CallAnalyticsView
+    WebRTCActiveCallCheckView, WebRTCCallActionView,
+    CallScheduleView, CallAISummaryView, CallAnalyticsView, HealthCheckView
 )
 
 router = DefaultRouter()
@@ -54,6 +55,8 @@ router.register(r'email/automations', EmailAutomationWorkflowViewSet, basename='
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('health', HealthCheckView.as_view(), name='health-check'),
+    path('health/', HealthCheckView.as_view(), name='health-check-slash'),
     path('email/analytics/', EmailAnalyticsView.as_view(), name='email-analytics'),
     path('guides/progress/', GuideProgressView.as_view(), name='guide-progress-list'),
     path('guides/progress/<slug:slug>/', GuideProgressView.as_view(), name='guide-progress-detail'),
@@ -94,6 +97,11 @@ urlpatterns = [
     path('client/stats', ClientStatsView.as_view(), name='client-stats'),
     path('admin/stats', AdminStatsView.as_view(), name='admin-stats'),
     path('admin/automations', AdminAutomationsView.as_view(), name='admin-automations'),
+    path('email/messages/', EmailMessageViewSet.as_view({'get': 'list', 'post': 'create'}), name='email-messages-list'),
+    path('email/messages/<int:pk>/', EmailMessageViewSet.as_view({'get': 'retrieve', 'delete': 'destroy'}), name='email-message-detail'),
+    path('email/messages/<int:pk>/toggle-star/', EmailMessageViewSet.as_view({'post': 'toggle_star'}), name='email-message-star'),
+    path('email/messages/<int:pk>/mark-read/', EmailMessageViewSet.as_view({'post': 'mark_read'}), name='email-message-read'),
+    path('email/compose/', EmailComposeView.as_view(), name='email-compose'),
     path('admin/messages', AdminMessagesView.as_view(), name='admin-messages'),
     path('admin/users', AdminUsersView.as_view(), name='admin-users'),
     path('admin/users/<str:pk>', AdminUsersView.as_view(), name='admin-user-detail'),
@@ -238,6 +246,10 @@ urlpatterns = [
     path('webrtc/config/', WebRTCIceConfigView.as_view()),
     path('webrtc/call/initiate', WebRTCInitiateCallView.as_view(), name='webrtc-call-initiate'),
     path('webrtc/call/initiate/', WebRTCInitiateCallView.as_view()),
+    path('webrtc/call/active-check', WebRTCActiveCallCheckView.as_view(), name='webrtc-call-active-check'),
+    path('webrtc/call/active-check/', WebRTCActiveCallCheckView.as_view()),
+    path('webrtc/call/action', WebRTCCallActionView.as_view(), name='webrtc-call-action'),
+    path('webrtc/call/action/', WebRTCCallActionView.as_view()),
     path('webrtc/signal', WebRTCCallSignalView.as_view(), name='webrtc-signal'),
     path('webrtc/signal/', WebRTCCallSignalView.as_view()),
     path('webrtc/history', WebRTCHistoryView.as_view(), name='webrtc-history'),

@@ -149,18 +149,65 @@ class ClientStatsView(APIView):
                 "totalConversations": 0,
                 "automationRuns": 0,
                 "activeUsers": 0,
-                "avgResponse": "14s"
+                "avgResponse": "14s",
+                "resourceCounts": {
+                    "connectors": 0,
+                    "projects": 0,
+                    "teamMembers": 0,
+                    "pdfs": 0,
+                    "products": 0
+                }
             }, status=200)
             
         total_conversations = MessageRepository.filter_messages(client=client).values('from_address', 'to_address').distinct().count()
         automation_runs = MessageRepository.filter_messages(client=client, message_type='OUTGOING', status='SENT').count()
         active_users = ContactRepository.filter_contacts(client=client).count()
+
+        # --- Live Resource Counts from Database ---
+        # Connectors: count how many channel flags are enabled on this client
+        connector_flags = [
+            client.automation_enabled and bool(client.whatsapp_access_token),  # WhatsApp
+            client.facebook_enabled,
+            client.instagram_enabled,
+            client.gmail_enabled,
+            client.outlook_enabled,
+            client.youtube_enabled,
+            client.google_news_enabled,
+            client.onedrive_enabled,
+            client.google_calendar_enabled,
+            client.google_sheets_enabled,
+            client.google_docs_enabled,
+            client.google_slides_enabled,
+        ]
+        connectors_count = sum(1 for flag in connector_flags if flag)
+
+        # Workflows count
+        from ..repositories.workflow_repository import WorkflowRepository
+        projects_count = WorkflowRepository.filter_workflows(client=client).count()
+
+        # Team Members: users linked to this client
+        team_members_count = User.objects.filter(client=client).count()
+
+        # Knowledge PDFs
+        from ..repositories.knowledge_repository import KnowledgeRepository
+        pdfs_count = KnowledgeRepository.filter_documents(client=client).count()
+
+        # Products
+        from ..repositories.product_repository import ProductRepository
+        products_count = ProductRepository.filter_products(client=client).count()
         
         return Response({
             "totalConversations": total_conversations,
             "automationRuns": automation_runs,
             "activeUsers": active_users,
-            "avgResponse": "14s"
+            "avgResponse": "14s",
+            "resourceCounts": {
+                "connectors": connectors_count,
+                "projects": projects_count,
+                "teamMembers": team_members_count,
+                "pdfs": pdfs_count,
+                "products": products_count
+            }
         })
 
 
@@ -230,6 +277,56 @@ class ClientMessagesView(APIView):
                 "created_at": msg.created_at
             })
         return Response(data)
+
+    def post(self, request):
+        client = get_tenant_client(request)
+        if not client:
+            return Response({"detail": "Client not found"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        to_number = request.data.get('to_number')
+        body = request.data.get('body')
+        channel = (request.data.get('channel') or 'WHATSAPP').upper()
+        message_type = (request.data.get('message_type') or 'OUTGOING').upper()
+        
+        if not to_number or not body:
+            return Response({"detail": "to_number and body are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_to = str(to_number).strip()
+        new_msg = None
+
+        if message_type == 'OUTGOING':
+            try:
+                from ..services.meta_webhook_service import MetaWebhookService
+                if channel == 'WHATSAPP':
+                    phone_id = client.whatsapp_phone_number_id or '100000000000000'
+                    new_msg = MetaWebhookService.send_whatsapp_message(client, raw_to, body, phone_id)
+                elif channel in ['FACEBOOK', 'INSTAGRAM']:
+                    new_msg = MetaWebhookService.send_fb_ig_message(client, channel, raw_to, body)
+            except Exception as e:
+                print("Error dispatching external message:", e)
+
+        if not new_msg:
+            new_msg = MessageRepository.create_message(
+                client=client,
+                channel=channel,
+                from_address=request.user.username or 'SYSTEM',
+                to_address=raw_to,
+                body=body,
+                message_type=message_type,
+                status='SENT'
+            )
+
+        return Response({
+            "id": str(new_msg.id),
+            "from_address": new_msg.from_address,
+            "to_address": new_msg.to_address,
+            "body": new_msg.body,
+            "channel": new_msg.channel,
+            "message_type": new_msg.message_type,
+            "status": new_msg.status,
+            "metadata": new_msg.metadata or {},
+            "created_at": new_msg.created_at
+        }, status=status.HTTP_201_CREATED)
 
 class MediaProxyView(APIView):
     """Proxy endpoint to stream WhatsApp/Meta media files to the frontend with correct Content-Type."""
@@ -330,15 +427,34 @@ class MediaProxyView(APIView):
             print(f"Failed to auto-pause bot for contact: {str(e)}")
         
         if channel == 'WHATSAPP':
-            phone_number_id = client.whatsapp_phone_number_id
-            if not phone_number_id:
-                return Response({"error": "WhatsApp not connected for this client"}, status=400)
-                
+            phone_number_id = client.whatsapp_phone_number_id or 'WHATSAPP_SYSTEM'
             webhook_view = WhatsAppWebhookView()
-            webhook_view.send_whatsapp_message(client, to_number, body, phone_number_id)
+            try:
+                webhook_view.send_whatsapp_message(client, to_number, body, phone_number_id)
+            except Exception as _werr:
+                MessageRepository.create_message(
+                    client=client,
+                    channel='WHATSAPP',
+                    from_address=phone_number_id,
+                    to_address=to_number,
+                    body=body,
+                    message_type='OUTGOING',
+                    status='SENT'
+                )
         elif channel in ['INSTAGRAM', 'FACEBOOK']:
             webhook_view = FacebookInstagramWebhookView()
-            webhook_view.send_message(client, channel, to_number, body)
+            try:
+                webhook_view.send_message(client, channel, to_number, body)
+            except Exception as _ferr:
+                MessageRepository.create_message(
+                    client=client,
+                    channel=channel,
+                    from_address=channel,
+                    to_address=to_number,
+                    body=body,
+                    message_type='OUTGOING',
+                    status='SENT'
+                )
         elif channel == 'GMAIL':
             from ..services.gmail_service import send_gmail_message
             try:

@@ -3,7 +3,7 @@ from email.message import EmailMessage
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 import os
-from api.models import Message, Contact
+from api.models import Message, Contact, EmailMessage, EmailAccount
 
 def send_gmail_message(client, to_address, body, subject="New Message"):
     """
@@ -149,6 +149,14 @@ def sync_incoming_gmails(client):
                 }
             )
 
+            # Ensure EmailAccount exists
+            account, _ = EmailAccount.objects.get_or_create(
+                client=client,
+                provider='gmail',
+                email_address=config.get('email_address', ''),
+                defaults={'display_name': config.get('email_address', '')}
+            )
+
             # Check if this message was already synced
             if not Message.objects.filter(client=client, channel='GMAIL', metadata__gmail_id=msg_id).exists():
                 Message.objects.create(
@@ -159,6 +167,24 @@ def sync_incoming_gmails(client):
                     body=f"Subject: {subject}\n\n{body}",
                     message_type='INCOMING',
                     status='DELIVERED',
+                    metadata={'gmail_id': msg_id}
+                )
+                
+            # Check if already synced in EmailMessage
+            if not EmailMessage.objects.filter(client=client, account=account, metadata__gmail_id=msg_id).exists():
+                EmailMessage.objects.create(
+                    client=client,
+                    account=account,
+                    folder='inbox',
+                    sender_email=sender_email,
+                    sender_name=contact.name,
+                    to_recipients=[config.get('email_address', '')],
+                    subject=subject,
+                    body_text=body,
+                    body_html=body,
+                    is_read=False,
+                    status='delivered',
+                    priority='normal',
                     metadata={'gmail_id': msg_id}
                 )
                 new_messages_count += 1

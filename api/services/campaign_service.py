@@ -17,6 +17,9 @@ class CampaignService:
             # Determine audience
             if campaign.audience_filter == 'ALL':
                 contacts = ContactRepository.filter_contacts(client=client)
+            elif campaign.audience_filter == 'SPECIFIC' and campaign.tags:
+                # If SPECIFIC, tags field contains the list of selected contact IDs
+                contacts = ContactRepository.filter_contacts(client=client).filter(id__in=campaign.tags)
             else:
                 contacts = ContactRepository.filter_contacts(client=client, stage=campaign.audience_filter)
 

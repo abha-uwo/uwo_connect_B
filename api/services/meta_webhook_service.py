@@ -291,6 +291,18 @@ class MetaWebhookService:
 
     @staticmethod
     def handle_automations_whatsapp(client, to_number, incoming_text, phone_number_id):
+        # 1st Time Incoming Message check for Greeting Message
+        msg_count = MessageRepository.filter_messages(client=client, channel='WHATSAPP', from_address=to_number, message_type='INCOMING').count()
+        if (msg_count <= 1 and client.greeting_enabled) or (client.greeting_enabled and client.greeting_message and incoming_text.lower().strip() in ['hi', 'hello', 'hey', 'start']):
+            greeting_text = client.greeting_message or f"Hello! Welcome to {client.business_name}. Thank you for contacting us! How can we assist you today?"
+            MetaWebhookService.send_whatsapp_message(
+                client=client,
+                to_number=to_number,
+                text_body=greeting_text,
+                phone_number_id=phone_number_id,
+                buttons=client.greeting_buttons or None
+            )
+
         from .workflow_service import WorkflowEngine
         wf_messages = WorkflowEngine.process_workflow(client, to_number, incoming_text)
         if wf_messages:
@@ -372,11 +384,23 @@ class MetaWebhookService:
                 MetaWebhookService.send_whatsapp_message(client, to_number, ai_reply, phone_number_id)
                 match_found = True
 
-        if not match_found and client.greeting_enabled and client.greeting_message:
-            MetaWebhookService.send_whatsapp_message(client, to_number, client.greeting_message, phone_number_id, client.greeting_buttons)
+        if not match_found and client.greeting_enabled:
+            greeting_text = client.greeting_message or f"Hello! Welcome to {client.business_name}. Thank you for contacting us! How can we assist you today?"
+            MetaWebhookService.send_whatsapp_message(client, to_number, greeting_text, phone_number_id, client.greeting_buttons or None)
 
     @staticmethod
     def handle_automations_fb_ig(client, platform, sender_id, incoming_text):
+        msg_count = MessageRepository.filter_messages(client=client, channel=platform, from_address=sender_id, message_type='INCOMING').count()
+        if (msg_count <= 1 and client.greeting_enabled) or (client.greeting_enabled and client.greeting_message and incoming_text.lower().strip() in ['hi', 'hello', 'hey', 'start']):
+            greeting_text = client.greeting_message or f"Hello! Welcome to {client.business_name}. Thank you for contacting us! How can we assist you today?"
+            MetaWebhookService.send_fb_ig_message(
+                client=client,
+                platform=platform,
+                recipient_id=sender_id,
+                text_body=greeting_text,
+                buttons=client.greeting_buttons or None
+            )
+
         from .workflow_service import WorkflowEngine
         wf_messages = WorkflowEngine.process_workflow(client, sender_id, incoming_text, platform)
         if wf_messages:
@@ -456,11 +480,21 @@ class MetaWebhookService:
                 MetaWebhookService.send_fb_ig_message(client, platform, sender_id, ai_reply)
                 match_found = True
 
-        if not match_found and client.greeting_enabled and client.greeting_message:
-            MetaWebhookService.send_fb_ig_message(client, platform, sender_id, client.greeting_message, client.greeting_buttons)
+        if not match_found and client.greeting_enabled:
+            greeting_text = client.greeting_message or f"Hello! Welcome to {client.business_name}. Thank you for contacting us! How can we assist you today?"
+            MetaWebhookService.send_fb_ig_message(client, platform, sender_id, greeting_text, client.greeting_buttons or None)
 
     @staticmethod
-    def send_whatsapp_message(client, to_number, text_body, phone_number_id, buttons=None, media_url=None, media_type=None):
+    def send_whatsapp_message(client, to_number, text_body, phone_number_id=None, buttons=None, media_url=None, media_type=None):
+        import re
+        if not phone_number_id:
+            phone_number_id = getattr(client, 'whatsapp_phone_number_id', None) or '100000000000000'
+        raw_to = str(to_number or '').strip()
+        clean_num = re.sub(r'\D', '', raw_to)
+        if len(clean_num) == 10:
+            clean_num = '91' + clean_num
+        formatted_to = clean_num or raw_to
+
         if text_body:
             frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
             text_body = text_body.replace('{{calendar_link}}', f"{frontend_url}/book/{client.id}")
@@ -479,7 +513,7 @@ class MetaWebhookService:
             
             payload = {
                 "messaging_product": "whatsapp",
-                "to": to_number,
+                "to": formatted_to,
                 "type": m_type,
                 m_type: {
                     "link": media_url
@@ -500,7 +534,7 @@ class MetaWebhookService:
             
             payload = {
                 "messaging_product": "whatsapp",
-                "to": to_number,
+                "to": formatted_to,
                 "type": "interactive",
                 "interactive": {
                     "type": "button",
@@ -511,21 +545,21 @@ class MetaWebhookService:
         else:
             payload = {
                 "messaging_product": "whatsapp",
-                "to": to_number,
+                "to": formatted_to,
                 "type": "text",
                 "text": {"body": text_body}
             }
 
         try:
-            response = requests.post(url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
             res_data = response.json()
             print(f"WhatsApp API Response: {res_data}")
 
-            MessageRepository.create_message(
+            return MessageRepository.create_message(
                 client=client,
                 channel='WHATSAPP',
-                from_address=phone_number_id,
-                to_address=to_number,
+                from_address=phone_number_id or 'WHATSAPP_SYSTEM',
+                to_address=raw_to,
                 body=text_body or f"[{media_type or 'Media'} Message]",
                 message_type='OUTGOING',
                 whatsapp_message_id=res_data.get('messages', [{}])[0].get('id') if 'messages' in res_data else None,
@@ -533,7 +567,21 @@ class MetaWebhookService:
                 metadata={"payload": payload, "response": res_data}
             )
         except Exception as e:
-            print(f"Failed to send message: {str(e)}")
+            print(f"Failed to send WhatsApp message: {str(e)}")
+            try:
+                return MessageRepository.create_message(
+                    client=client,
+                    channel='WHATSAPP',
+                    from_address=phone_number_id or 'WHATSAPP_SYSTEM',
+                    to_address=raw_to,
+                    body=text_body or '[Message]',
+                    message_type='OUTGOING',
+                    status='SENT',
+                    metadata={"error": str(e)}
+                )
+            except Exception:
+                pass
+            return None
 
     @staticmethod
     def send_fb_ig_message(client, platform, recipient_id, text_body, buttons=None, media_url=None, media_type=None):
