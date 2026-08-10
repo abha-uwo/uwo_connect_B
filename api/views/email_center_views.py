@@ -268,8 +268,7 @@ class EmailComposeView(APIView):
             status='delivered',
             priority='normal',
             is_read=True,
-            folder='sent',
-            provider=provider
+            folder='sent'
         )
 
         if action == 'draft':
