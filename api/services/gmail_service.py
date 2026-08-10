@@ -1,5 +1,5 @@
 import base64
-from email.message import EmailMessage
+import email.message
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 import os
@@ -38,7 +38,7 @@ def send_gmail_message(client, to_address, body, subject="New Message"):
     try:
         service = build('gmail', 'v1', credentials=creds)
         
-        message = EmailMessage()
+        message = email.message.EmailMessage()
         message.set_content(body)
         
         message['To'] = to_address
@@ -92,8 +92,8 @@ def sync_incoming_gmails(client):
     try:
         service = build('gmail', 'v1', credentials=creds)
         
-        # Get unread messages in inbox
-        results = service.users().messages().list(userId='me', q="is:unread label:inbox").execute()
+        # Get recent messages in inbox (max 15 to avoid long initial syncs)
+        results = service.users().messages().list(userId='me', q="label:inbox", maxResults=15).execute()
         messages = results.get('messages', [])
         
         if not messages:
@@ -172,7 +172,7 @@ def sync_incoming_gmails(client):
                 
             # Check if already synced in EmailMessage
             if not EmailMessage.objects.filter(client=client, account=account, metadata__gmail_id=msg_id).exists():
-                EmailMessage.objects.create(
+                incoming_msg = EmailMessage.objects.create(
                     client=client,
                     account=account,
                     folder='inbox',
@@ -182,19 +182,65 @@ def sync_incoming_gmails(client):
                     subject=subject,
                     body_text=body,
                     body_html=body,
-                    is_read=False,
+                    is_read='UNREAD' not in full_msg.get('labelIds', []),
                     status='delivered',
                     priority='normal',
                     metadata={'gmail_id': msg_id}
                 )
                 new_messages_count += 1
-                
-                # Remove UNREAD label
-                service.users().messages().modify(
-                    userId='me',
-                    id=msg_id,
-                    body={'removeLabelIds': ['UNREAD']}
-                ).execute()
+
+                # Trigger Auto-Replies
+                from api.models import EmailAutoReplyRule
+                active_rules = EmailAutoReplyRule.objects.filter(client=client, is_active=True)
+                for rule in active_rules:
+                    # Match pattern
+                    matches = True
+                    if rule.subject_pattern and rule.subject_pattern.lower() not in subject.lower():
+                        matches = False
+                    if rule.sender_pattern and rule.sender_pattern.lower() not in sender_email.lower():
+                        matches = False
+                    if rule.keyword_match:
+                        kw = rule.keyword_match.lower()
+                        if kw not in subject.lower() and kw not in body.lower():
+                            matches = False
+                    
+                    if matches:
+                        # Personalize template
+                        first_name = contact.name.split(' ')[0] if contact.name else "there"
+                        last_name = contact.name.split(' ')[-1] if contact.name and ' ' in contact.name else ""
+                        full_name = contact.name or "Valued Customer"
+                        
+                        r_body = rule.reply_body
+                        r_body = r_body.replace('{{first_name}}', first_name)
+                        r_body = r_body.replace('{{last_name}}', last_name)
+                        r_body = r_body.replace('{{full_name}}', full_name)
+                        r_body = r_body.replace('{{email}}', sender_email)
+                        
+                        r_subject = rule.reply_subject or f"Re: {subject}"
+                        r_subject = r_subject.replace('{{first_name}}', first_name)
+                        r_subject = r_subject.replace('{{last_name}}', last_name)
+                        r_subject = r_subject.replace('{{full_name}}', full_name)
+                        r_subject = r_subject.replace('{{email}}', sender_email)
+
+                        try:
+                            send_gmail_message(client, sender_email, r_body, r_subject)
+                            # Log auto-reply as sent email
+                            EmailMessage.objects.create(
+                                client=client,
+                                account=account,
+                                folder='sent',
+                                sender_email=config.get('email_address', ''),
+                                sender_name=account.display_name or config.get('email_address', ''),
+                                to_recipients=[sender_email],
+                                subject=r_subject,
+                                body_text=r_body,
+                                body_html=r_body,
+                                status='delivered',
+                                priority='normal',
+                                metadata={'reply_to_gmail_id': msg_id, 'auto_reply_rule_id': str(rule.id)}
+                            )
+                        except Exception as e:
+                            print(f"AutoReply Send Error: {str(e)}")
 
         return new_messages_count
     except Exception as e:

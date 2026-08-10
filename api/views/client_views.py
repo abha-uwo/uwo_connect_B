@@ -17,8 +17,8 @@ from django.utils.decorators import method_decorator
 from ..serializers import RegisterSerializer, UserSerializer, ClientSerializer, AutomationSerializer, WorkflowSerializer, ContactSerializer, TemplateSerializer, CampaignSerializer, SupportMessageSerializer, AuditLogSerializer, TeamInviteSerializer, ProductSerializer, OrderSerializer
 from ..models import User, Client, Automation, Message, Workflow, KnowledgeDocument, KnowledgeChunk, Contact, Template, Campaign, SupportMessage, AuditLog, TeamInvite, Product, Order
 import requests
-import os
-import json
+import logging
+logger = logging.getLogger(__name__)
 from ..services.ai_service import get_ai_response, get_platform_assistance, get_rag_response, get_embedding, chunk_text, find_relevant_chunks, get_ai_draft
 from rest_framework.permissions import BasePermission
 from .webhook_views import WhatsAppWebhookView, FacebookInstagramWebhookView
@@ -458,7 +458,7 @@ class MediaProxyView(APIView):
         elif channel == 'GMAIL':
             from ..services.gmail_service import send_gmail_message
             try:
-                send_gmail_message(client, to_address=to_number, body=body)
+                send_gmail_message(client, to_number, body)
                 MessageRepository.create_message(
                     client=client,
                     channel='GMAIL',

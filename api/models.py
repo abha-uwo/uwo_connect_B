@@ -988,9 +988,9 @@ class EmailMessage(models.Model):
     
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='delivered')
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='normal')
-    is_starred = models.BooleanField(default=False)
     is_read = models.BooleanField(default=False)
     labels = models.JSONField(default=list, blank=True) # ['Sales', 'Support', 'Urgent']
+    metadata = models.JSONField(default=dict, blank=True) # For provider IDs, thread IDs, etc.
 
     scheduled_at = models.DateTimeField(null=True, blank=True)
     recurring_rule = models.CharField(max_length=50, blank=True, default='') # daily, weekly, monthly

@@ -45,7 +45,7 @@ class GmailConnectView(APIView):
         
         authorization_url, state = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true',
+            include_granted_scopes='false',
             prompt='consent' # Force consent to ensure we get a refresh token
         )
         
@@ -159,3 +159,18 @@ class GmailSyncView(APIView):
             return Response({"success": True, "synced_count": count})
         except Exception as e:
             return Response({"error": str(e)}, status=500)
+
+class GmailDisconnectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        client = request.user.client
+        if not client:
+            return Response({"error": "User does not have an associated client."}, status=400)
+            
+        client.gmail_enabled = False
+        client.gmail_config = {}
+        client.save()
+        
+        return Response({"success": True, "message": "Gmail disconnected successfully."})
+

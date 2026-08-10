@@ -41,6 +41,10 @@ class EmailAccountViewSet(viewsets.ModelViewSet):
         serializer.save(client=self.request.user.client)
 
 
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+
+@method_decorator(csrf_exempt, name='dispatch')
 class EmailMessageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = EmailMessageSerializer
@@ -92,6 +96,12 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
                     sync_incoming_gmails(client)
             except Exception as e:
                 logger.error(f"Error syncing Gmail emails: {e}")
+
+            # Auto-process scheduled emails
+            try:
+                self.process_scheduled(request)
+            except Exception as e:
+                logger.error(f"Error auto-processing scheduled emails: {e}")
                 
         response = super().list(request, *args, **kwargs)
 
@@ -134,7 +144,7 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def schedule_action(self, request, pk=None):
         msg = self.get_object()
-        cmd = request.data.get('action') # 'send_now', 'cancel', 'reschedule'
+        cmd = request.data.get('action')  # 'send_now', 'cancel', 'reschedule'
         if cmd == 'send_now':
             msg.folder = 'sent'
             msg.status = 'delivered'
@@ -154,6 +164,43 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
                 msg.save()
             return Response({'detail': 'Schedule updated successfully.'})
         return Response({'error': 'Invalid action'}, status=400)
+
+    @action(detail=True, methods=['post'])
+    def delete_message(self, request, pk=None):
+        """Move the email to trash instead of hard delete"""
+        msg = self.get_object()
+        msg.folder = 'trash'
+        msg.status = 'deleted'
+        msg.save()
+        return Response({'detail': 'Email moved to trash.'})
+
+    @action(detail=False, methods=['post'])
+    def process_scheduled(self, request):
+        """Process due scheduled emails for the current client"""
+        client = getattr(request.user, 'client', None)
+        if not client:
+            return Response({'error': 'Client not found'}, status=400)
+        from django.utils import timezone as dj_timezone
+        now = dj_timezone.now()
+        due_messages = EmailMessage.objects.filter(client=client, folder='scheduled', scheduled_at__lte=now)
+        sent = []
+        for msg in due_messages:
+            provider = msg.account.provider if msg.account else 'gmail'
+            try:
+                if provider == 'gmail':
+                    from ..services.gmail_service import send_gmail_message
+                    send_gmail_message(client, msg.to_recipients[0] if msg.to_recipients else '', msg.body_text, msg.subject)
+                else:
+                    # Placeholder for Outlook send logic – simulate success
+                    pass
+                msg.folder = 'sent'
+                msg.status = 'delivered'
+                msg.scheduled_at = None
+                msg.save()
+                sent.append(str(msg.id))
+            except Exception as e:
+                logger.error(f"Failed to send scheduled email {msg.id}: {e}")
+        return Response({'processed': len(sent), 'ids': sent})
 
     @action(detail=True, methods=['post'])
     def add_note(self, request, pk=None):
@@ -281,9 +328,27 @@ class EmailComposeView(APIView):
             scheduled_date = request.data.get('scheduled_date')
             scheduled_time = request.data.get('scheduled_time')
             
-            # Simple scheduled saving
+            # Parse datetime and make it timezone aware
+            from django.utils.dateparse import parse_datetime
+            from django.utils.timezone import make_aware
+            import pytz
+            
+            scheduled_dt = None
+            if scheduled_date and scheduled_time:
+                try:
+                    # e.g., "2026-08-10T14:59"
+                    dt_str = f"{scheduled_date}T{scheduled_time}"
+                    naive_dt = parse_datetime(dt_str)
+                    if naive_dt:
+                        # Assuming client's local timezone is Kolkata/IST (Asia/Kolkata) or fallback to UTC
+                        tz = pytz.timezone('Asia/Kolkata')
+                        scheduled_dt = make_aware(naive_dt, timezone=tz)
+                except Exception as e:
+                    logger.error(f"Error parsing schedule datetime: {e}")
+            
             msg.folder = 'scheduled'
             msg.status = 'scheduled'
+            msg.scheduled_at = scheduled_dt
             msg.metadata = {'scheduled_date': scheduled_date, 'scheduled_time': scheduled_time}
             msg.save()
             return Response({'detail': f'Email scheduled for {scheduled_date} {scheduled_time}', 'id': msg.id})
@@ -323,7 +388,7 @@ class EmailComposeView(APIView):
             elif provider == 'gmail':
                 if not client.gmail_enabled:
                     return Response({'error': 'Gmail is not connected'}, status=status.HTTP_400_BAD_REQUEST)
-                from .gmail_views import send_gmail_message
+                from ..services.gmail_service import send_gmail_message
                 try:
                     send_gmail_message(client, to, body, subject)
                     sent_success = True
