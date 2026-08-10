@@ -118,8 +118,13 @@ MIGRATION_MODULES = {
 
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.run\.app$",
+]
 CORS_ALLOWED_ORIGINS = [
     'https://uwoconnect.aisa24.com',
+    'https://uwoconnectforf-743978421487.asia-south1.run.app',
+    'https://uwoconnectforf-743928421487.asia-south1.run.app',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://127.0.0.1:3000',
@@ -128,6 +133,11 @@ CORS_ALLOWED_ORIGINS = [
 
 # CSRF trusted origins — required for POST requests in production (DEBUG=False)
 CSRF_TRUSTED_ORIGINS = [
+    'https://*.run.app',
+    'https://uwoconnectforb-743978421487.asia-south1.run.app',
+    'https://uwoconnectforf-743978421487.asia-south1.run.app',
+    'https://uwoconnectforb-743928421487.asia-south1.run.app',
+    'https://uwoconnectforf-743928421487.asia-south1.run.app',
     'https://aisaconnectback-anaqbuapb6c6apgy.centralindia-01.azurewebsites.net',
     'https://*.azurewebsites.net',
     'https://*.azurestaticapps.net',
