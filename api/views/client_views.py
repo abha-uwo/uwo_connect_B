@@ -168,7 +168,29 @@ class ContactViewSet(viewsets.ModelViewSet):
         client = get_tenant_client(self.request)
         if self.request.user.role == 'ADMIN' and not client:
             return Contact.objects.none()
-        return ContactRepository.filter_contacts(client=client)
+        qs = ContactRepository.filter_contacts(client=client)
+
+        if self.request.user.role != 'CLIENT' and self.request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
+            assigned = self.request.user.assigned_social_channels or []
+            allowed_channels = []
+            if 'wa_default' in assigned: allowed_channels.append('WHATSAPP')
+            if 'ig_main' in assigned: allowed_channels.append('INSTAGRAM')
+            if 'fb_page' in assigned: allowed_channels.append('FACEBOOK')
+            if 'gmail_main' in assigned: allowed_channels.append('GMAIL')
+            
+            allowed_msg_addresses = Message.objects.filter(
+                client=client, 
+                channel__in=allowed_channels
+            ).values_list('from_address', 'to_address')
+            
+            addresses = set()
+            for frm, to in allowed_msg_addresses:
+                addresses.add(frm)
+                addresses.add(to)
+            
+            qs = qs.filter(platform_id__in=addresses)
+            
+        return qs
 
     def perform_create(self, serializer):
         client = get_tenant_client(self.request)
@@ -223,18 +245,54 @@ class ClientStatsView(APIView):
                 "totalConversations": 0,
                 "automationRuns": 0,
                 "activeUsers": 0,
-                "avgResponse": "14s"
+                "avgResponse": "14s",
+                "resourceCounts": {
+                    "connectors": 0,
+                    "projects": 0,
+                    "teamMembers": 0,
+                    "pdfs": 0,
+                    "products": 0
+                }
             }, status=200)
             
         total_conversations = MessageRepository.filter_messages(client=client).values('from_address', 'to_address').distinct().count()
         automation_runs = MessageRepository.filter_messages(client=client, message_type='OUTGOING', status='SENT').count()
         active_users = ContactRepository.filter_contacts(client=client).count()
-        
+
+        connectors_count = sum([
+            bool(client.facebook_enabled),
+            bool(client.instagram_enabled),
+            bool(client.gmail_enabled),
+            bool(client.onedrive_enabled),
+            bool(client.google_calendar_enabled),
+            bool(client.google_sheets_enabled),
+            bool(client.google_docs_enabled),
+            bool(client.google_slides_enabled),
+            bool(client.zoho_enabled),
+            bool(client.youtube_enabled),
+            bool(client.google_news_enabled),
+            bool(client.outlook_enabled),
+            bool(client.whatsapp_access_token)
+        ])
+
+        from ..models import Workflow, User, KnowledgeDocument, Product
+        projects_count = Workflow.objects.filter(client=client).count()
+        team_members_count = User.objects.filter(client=client).count()
+        pdfs_count = KnowledgeDocument.objects.filter(client=client).count()
+        products_count = Product.objects.filter(client=client).count()
+
         return Response({
             "totalConversations": total_conversations,
             "automationRuns": automation_runs,
             "activeUsers": active_users,
-            "avgResponse": "14s"
+            "avgResponse": "14s",
+            "resourceCounts": {
+                "connectors": connectors_count,
+                "projects": projects_count,
+                "teamMembers": team_members_count,
+                "pdfs": pdfs_count,
+                "products": products_count
+            }
         })
 
 
@@ -288,8 +346,19 @@ class ClientMessagesView(APIView):
         client = get_tenant_client(request)
         if not client:
             return Response([])
-        
-        messages = MessageRepository.filter_messages(client=client).order_by('-created_at')[:1000]
+        messages = MessageRepository.filter_messages(client=client)
+
+        if request.user.role != 'CLIENT' and request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
+            assigned = request.user.assigned_social_channels or []
+            allowed_channels = []
+            if 'wa_default' in assigned: allowed_channels.append('WHATSAPP')
+            if 'ig_main' in assigned: allowed_channels.append('INSTAGRAM')
+            if 'fb_page' in assigned: allowed_channels.append('FACEBOOK')
+            if 'gmail_main' in assigned: allowed_channels.append('GMAIL')
+            
+            messages = messages.filter(channel__in=allowed_channels)
+
+        messages = messages.order_by('-created_at')[:1000]
         data = []
         for msg in messages:
             data.append({
