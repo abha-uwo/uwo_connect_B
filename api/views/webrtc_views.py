@@ -120,27 +120,40 @@ class WebRTCActiveCallCheckView(APIView):
         user_email = ""
         user_name = ""
         user_client_id = None
+        print("--- Active Call Check Request ---")
+        print(f"User: {request.user} (Authenticated: {request.user.is_authenticated})")
         if getattr(request, 'user', None) and request.user.is_authenticated:
             user_email = str(getattr(request.user, 'email', '') or '').lower()
             user_name = str(getattr(request.user, 'username', '') or '').lower()
             if getattr(request.user, 'client', None):
                 user_client_id = request.user.client.id
+            print(f"Email: {user_email}, Username: {user_name}, Client ID: {user_client_id}")
+        else:
+            print("Request user not authenticated.")
+            return Response({"active_call": False}, status=status.HTTP_200_OK)
+        print(f"ACTIVE_CALL_SESSIONS: {ACTIVE_CALL_SESSIONS}")
 
         active = None
         for sid, sess in list(ACTIVE_CALL_SESSIONS.items()):
-            if sess.get("status") == "RINGING":
+            if sess.get("status") in ["RINGING", "CONNECTED"]:
                 recip = str(sess.get("recipient", "")).lower()
+                caller_user_id = sess.get("caller_user_id")
+                receiver_user_id = sess.get("receiver_user_id")
                 sess_client_id = sess.get("client_id")
 
                 # Workspace isolation check
                 if user_client_id and sess_client_id and user_client_id != sess_client_id:
                     continue
 
-                if not user_email or recip in ['all', 'team member', '', user_email, user_name] or user_email in recip or recip in user_email:
+                is_recipient = recip in ['all', 'team member', '', user_email, user_name] or user_email in recip or recip in user_email or (receiver_user_id and receiver_user_id == request.user.id)
+                is_caller = (caller_user_id and caller_user_id == request.user.id) or (user_name and sess.get("caller", "").lower() == user_name) or (user_email and sess.get("caller", "").lower() == user_email)
+
+                if is_recipient or is_caller:
                     active = sess
                     break
 
         if active:
+            is_caller_user = (active.get("caller_user_id") == request.user.id) or (user_name and active.get("caller", "").lower() == user_name) or (user_email and active.get("caller", "").lower() == user_email)
             return Response({
                 "active_call": True,
                 "session_id": active["session_id"],
@@ -148,7 +161,10 @@ class WebRTCActiveCallCheckView(APIView):
                 "recipient": active.get("recipient_display", active["recipient"]),
                 "is_video": active["is_video"],
                 "call_type": active["call_type"],
-                "sdp_offer": active.get("sdp_offer")
+                "sdp_offer": active.get("sdp_offer"),
+                "sdp_answer": active.get("sdp_answer"),
+                "status": active["status"],
+                "is_caller": is_caller_user
             }, status=status.HTTP_200_OK)
 
         return Response({"active_call": False}, status=status.HTTP_200_OK)
