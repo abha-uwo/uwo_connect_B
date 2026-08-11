@@ -41,7 +41,7 @@ class Client(models.Model):
     whatsapp_verify_token = models.CharField(max_length=100, null=True, blank=True)
     
     # Global Greeting Message
-    greeting_enabled = models.BooleanField(default=False)
+    greeting_enabled = models.BooleanField(default=True)
     greeting_message = models.TextField(null=True, blank=True)
     greeting_buttons = models.JSONField(default=list, blank=True)
     
@@ -1015,9 +1015,9 @@ class EmailMessage(models.Model):
     
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='delivered')
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='normal')
-    is_starred = models.BooleanField(default=False)
     is_read = models.BooleanField(default=False)
     labels = models.JSONField(default=list, blank=True) # ['Sales', 'Support', 'Urgent']
+    metadata = models.JSONField(default=dict, blank=True) # For provider IDs, thread IDs, etc.
 
     scheduled_at = models.DateTimeField(null=True, blank=True)
     recurring_rule = models.CharField(max_length=50, blank=True, default='') # daily, weekly, monthly
@@ -1088,6 +1088,38 @@ class EmailTeamNote(models.Model):
 
     def __str__(self):
         return f"Note by {self.author.username} on Msg #{self.message.id}"
+
+
+class CallHistory(models.Model):
+    CALL_TYPE_CHOICES = [
+        ('VOICE', 'Voice'),
+        ('VIDEO', 'Video'),
+    ]
+    STATUS_CHOICES = [
+        ('COMPLETED', 'Completed'),
+        ('MISSED', 'Missed'),
+        ('REJECTED', 'Rejected'),
+        ('FAILED', 'Failed'),
+    ]
+
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='call_histories', null=True, blank=True)
+    caller = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='outgoing_calls', null=True, blank=True)
+    caller_name = models.CharField(max_length=255)
+    receiver = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='incoming_calls', null=True, blank=True)
+    receiver_name = models.CharField(max_length=255)
+    receiver_dept = models.CharField(max_length=100, null=True, blank=True)
+    call_type = models.CharField(max_length=10, choices=CALL_TYPE_CHOICES, default='VOICE')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='COMPLETED')
+    duration = models.CharField(max_length=50, default='0s')
+    session_id = models.CharField(max_length=100, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.caller_name} -> {self.receiver_name} ({self.call_type})"
+
 
 
 

@@ -43,6 +43,10 @@ class AuthService:
         if user.role == 'CLIENT' and user.status != 'APPROVED':
             return {"error": f"Account status: {user.status}. Please wait for admin approval.", "status_code": 403}
 
+        user.is_online = True
+        user.last_active_at = timezone.now()
+        user.save(update_fields=['is_online', 'last_active_at'])
+
         refresh = RefreshToken.for_user(user)
         return {
             "user": AuthService._serialize_user(user),

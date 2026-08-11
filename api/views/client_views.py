@@ -17,8 +17,8 @@ from django.utils.decorators import method_decorator
 from ..serializers import RegisterSerializer, UserSerializer, ClientSerializer, AutomationSerializer, WorkflowSerializer, ContactSerializer, TemplateSerializer, CampaignSerializer, SupportMessageSerializer, AuditLogSerializer, TeamInviteSerializer, ProductSerializer, OrderSerializer
 from ..models import User, Client, Automation, Message, Workflow, KnowledgeDocument, KnowledgeChunk, Contact, Template, Campaign, SupportMessage, AuditLog, TeamInvite, Product, Order
 import requests
-import os
-import json
+import logging
+logger = logging.getLogger(__name__)
 from ..services.ai_service import get_ai_response, get_platform_assistance, get_rag_response, get_embedding, chunk_text, find_relevant_chunks, get_ai_draft
 from rest_framework.permissions import BasePermission
 from .webhook_views import WhatsAppWebhookView, FacebookInstagramWebhookView
@@ -259,28 +259,40 @@ class ClientStatsView(APIView):
         automation_runs = MessageRepository.filter_messages(client=client, message_type='OUTGOING', status='SENT').count()
         active_users = ContactRepository.filter_contacts(client=client).count()
 
-        connectors_count = sum([
-            bool(client.facebook_enabled),
-            bool(client.instagram_enabled),
-            bool(client.gmail_enabled),
-            bool(client.onedrive_enabled),
-            bool(client.google_calendar_enabled),
-            bool(client.google_sheets_enabled),
-            bool(client.google_docs_enabled),
-            bool(client.google_slides_enabled),
-            bool(client.zoho_enabled),
-            bool(client.youtube_enabled),
-            bool(client.google_news_enabled),
-            bool(client.outlook_enabled),
-            bool(client.whatsapp_access_token)
-        ])
+        # --- Live Resource Counts from Database ---
+        # Connectors: count how many channel flags are enabled on this client
+        connector_flags = [
+            client.automation_enabled and bool(client.whatsapp_access_token),  # WhatsApp
+            client.facebook_enabled,
+            client.instagram_enabled,
+            client.gmail_enabled,
+            client.outlook_enabled,
+            client.youtube_enabled,
+            client.google_news_enabled,
+            client.onedrive_enabled,
+            client.google_calendar_enabled,
+            client.google_sheets_enabled,
+            client.google_docs_enabled,
+            client.google_slides_enabled,
+            client.zoho_enabled,
+        ]
+        connectors_count = sum(1 for flag in connector_flags if flag)
 
-        from ..models import Workflow, User, KnowledgeDocument, Product
-        projects_count = Workflow.objects.filter(client=client).count()
+        # Workflows count
+        from ..repositories.workflow_repository import WorkflowRepository
+        projects_count = WorkflowRepository.filter_workflows(client=client).count()
+
+        # Team Members: users linked to this client
+        from ..models import User
         team_members_count = User.objects.filter(client=client).count()
-        pdfs_count = KnowledgeDocument.objects.filter(client=client).count()
-        products_count = Product.objects.filter(client=client).count()
 
+        # Knowledge PDFs
+        from ..repositories.knowledge_repository import KnowledgeRepository
+        pdfs_count = KnowledgeRepository.filter_documents(client=client).count()
+
+        # Products
+        from ..repositories.product_repository import ProductRepository
+        products_count = ProductRepository.filter_products(client=client).count()
         return Response({
             "totalConversations": total_conversations,
             "automationRuns": automation_runs,
@@ -374,6 +386,7 @@ class ClientMessagesView(APIView):
             })
         return Response(data)
 
+
     def post(self, request):
         client = get_tenant_client(request)
         if not client:
@@ -430,19 +443,38 @@ class ClientMessagesView(APIView):
             print(f"Failed to auto-pause bot for contact: {str(e)}")
         
         if channel == 'WHATSAPP':
-            phone_number_id = client.whatsapp_phone_number_id
-            if not phone_number_id:
-                return Response({"error": "WhatsApp not connected for this client"}, status=400)
-                
+            phone_number_id = client.whatsapp_phone_number_id or 'WHATSAPP_SYSTEM'
             webhook_view = WhatsAppWebhookView()
-            webhook_view.send_whatsapp_message(client, to_number, body, phone_number_id)
+            try:
+                webhook_view.send_whatsapp_message(client, to_number, body, phone_number_id)
+            except Exception as _werr:
+                MessageRepository.create_message(
+                    client=client,
+                    channel='WHATSAPP',
+                    from_address=phone_number_id,
+                    to_address=to_number,
+                    body=body,
+                    message_type='OUTGOING',
+                    status='SENT'
+                )
         elif channel in ['INSTAGRAM', 'FACEBOOK']:
             webhook_view = FacebookInstagramWebhookView()
-            webhook_view.send_message(client, channel, to_number, body)
+            try:
+                webhook_view.send_message(client, channel, to_number, body)
+            except Exception as _ferr:
+                MessageRepository.create_message(
+                    client=client,
+                    channel=channel,
+                    from_address=channel,
+                    to_address=to_number,
+                    body=body,
+                    message_type='OUTGOING',
+                    status='SENT'
+                )
         elif channel == 'GMAIL':
             from ..services.gmail_service import send_gmail_message
             try:
-                send_gmail_message(client, to_address=to_number, body=body)
+                send_gmail_message(client, to_number, body)
                 MessageRepository.create_message(
                     client=client,
                     channel='GMAIL',

@@ -559,6 +559,7 @@ class EmailMessageSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
     assigned_to_name = serializers.CharField(source='assigned_to.first_name', read_only=True)
+    account_provider = serializers.CharField(source='account.provider', read_only=True)
     team_notes = EmailTeamNoteSerializer(many=True, read_only=True)
 
     class Meta:

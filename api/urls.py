@@ -9,7 +9,7 @@ from .views import (
     SupportMessageViewSet, AdminImpersonateView, AuditLogViewSet,
     SuggestDraftView, TeamMemberViewSet, TeamInviteView, TeamChatView, ProductViewSet, OrderViewSet,
     CreatePaymentOrderView, VerifyPaymentView, PaymentHistoryView, CashfreeWebhookView, RazorpayWebhookView,
-    WhatsAppEmbeddedSignupView, GmailConnectView, GmailCallbackView, GmailSyncView, YouTubeConnectView, YouTubeCallbackView, YouTubeStatusView, YouTubeSyncView, YouTubeAnalyticsView, YouTubeVideosView, YouTubeCommentsView, YouTubeSettingsView, YouTubeCheckNewView, YouTubeUploadView, YouTubeChannelProfileView, YouTubeDeleteView, YouTubeAISuggestReplyView,
+    WhatsAppEmbeddedSignupView, GmailConnectView, GmailCallbackView, GmailSyncView, GmailDisconnectView, YouTubeConnectView, YouTubeCallbackView, YouTubeStatusView, YouTubeSyncView, YouTubeAnalyticsView, YouTubeVideosView, YouTubeCommentsView, YouTubeSettingsView, YouTubeCheckNewView, YouTubeUploadView, YouTubeChannelProfileView, YouTubeDeleteView, YouTubeAISuggestReplyView,
     InstagramEmbeddedSignupView, FacebookEmbeddedSignupView, InstagramOAuthCallbackView,
     ProjectViewSet, TaskViewSet, WorkReportView, WorkApprovalView, TeamChannelView,
     TeamChatMessageView, TeamAnalyticsView, TeamAICopilotView, AttendanceViewSet, LeaveRequestViewSet,
@@ -24,9 +24,10 @@ from .views import (
     GuideViewSet, GuideSectionDetailView, GuideStepDetailView, GuideProgressView,
     OutlookConnectView, OutlookCallbackView, OutlookStatusView, OutlookSyncView, OutlookSendMailView, OutlookDisconnectView,
     OutlookCalendarEventsView, OutlookTeamsView, OutlookContactsView, OutlookExcelView,
-    EmailAccountViewSet, EmailMessageViewSet, EmailAutoReplyViewSet, EmailAutomationWorkflowViewSet, EmailAnalyticsView,
+    EmailAccountViewSet, EmailMessageViewSet, EmailAutoReplyViewSet, EmailAutomationWorkflowViewSet, EmailAnalyticsView, EmailComposeView,
     WebRTCIceConfigView, WebRTCInitiateCallView, WebRTCCallSignalView, WebRTCHistoryView,
-    CallScheduleView, CallAISummaryView, CallAnalyticsView
+    WebRTCActiveCallCheckView, WebRTCCallActionView,
+    CallScheduleView, CallAISummaryView, CallAnalyticsView, HealthCheckView
 )
 from api.views.zoho_views import ZohoConnectView, ZohoCallbackView, ZohoDisconnectView, ZohoTestLeadView
 
@@ -55,6 +56,8 @@ router.register(r'email/automations', EmailAutomationWorkflowViewSet, basename='
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('health', HealthCheckView.as_view(), name='health-check'),
+    path('health/', HealthCheckView.as_view(), name='health-check-slash'),
     path('email/analytics/', EmailAnalyticsView.as_view(), name='email-analytics'),
     path('guides/progress/', GuideProgressView.as_view(), name='guide-progress-list'),
     path('guides/progress/<slug:slug>/', GuideProgressView.as_view(), name='guide-progress-detail'),
@@ -76,6 +79,7 @@ urlpatterns = [
     path('auth/google-client-id', GoogleClientIdView.as_view(), name='google-client-id'),
     path('auth/gmail/connect', GmailConnectView.as_view(), name='gmail-connect'),
     path('auth/gmail/callback', GmailCallbackView.as_view(), name='gmail-callback'),
+    path('auth/gmail/disconnect', GmailDisconnectView.as_view(), name='gmail-disconnect'),
     path('auth/google-calendar/connect', GoogleCalendarConnectView.as_view(), name='google-calendar-connect'),
     path('auth/google-calendar/callback', GoogleCalendarCallbackView.as_view(), name='google-calendar-callback'),
     path('auth/gmail/sync', GmailSyncView.as_view(), name='gmail-sync'),
@@ -95,6 +99,7 @@ urlpatterns = [
     path('client/stats', ClientStatsView.as_view(), name='client-stats'),
     path('admin/stats', AdminStatsView.as_view(), name='admin-stats'),
     path('admin/automations', AdminAutomationsView.as_view(), name='admin-automations'),
+    path('email/compose/', EmailComposeView.as_view(), name='email-compose'),
     path('admin/messages', AdminMessagesView.as_view(), name='admin-messages'),
     path('admin/users', AdminUsersView.as_view(), name='admin-users'),
     path('admin/users/<str:pk>', AdminUsersView.as_view(), name='admin-user-detail'),
@@ -248,6 +253,10 @@ urlpatterns = [
     path('webrtc/config/', WebRTCIceConfigView.as_view()),
     path('webrtc/call/initiate', WebRTCInitiateCallView.as_view(), name='webrtc-call-initiate'),
     path('webrtc/call/initiate/', WebRTCInitiateCallView.as_view()),
+    path('webrtc/call/active-check', WebRTCActiveCallCheckView.as_view(), name='webrtc-call-active-check'),
+    path('webrtc/call/active-check/', WebRTCActiveCallCheckView.as_view()),
+    path('webrtc/call/action', WebRTCCallActionView.as_view(), name='webrtc-call-action'),
+    path('webrtc/call/action/', WebRTCCallActionView.as_view()),
     path('webrtc/signal', WebRTCCallSignalView.as_view(), name='webrtc-signal'),
     path('webrtc/signal/', WebRTCCallSignalView.as_view()),
     path('webrtc/history', WebRTCHistoryView.as_view(), name='webrtc-history'),
