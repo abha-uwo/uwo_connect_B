@@ -152,3 +152,74 @@ class TeamChatConsumer(AsyncWebsocketConsumer):
             'type': 'new_team_message',
             'message': message
         }))
+
+class WebRTCConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        query_string = self.scope['query_string'].decode()
+        query_params = parse_qs(query_string)
+        token = query_params.get('token', [None])[0]
+
+        if not token:
+            await self.close()
+            return
+
+        try:
+            decoded_data = jwt.decode(token, settings.SIMPLE_JWT['SIGNING_KEY'], algorithms=[settings.SIMPLE_JWT['ALGORITHM']])
+            user_id = decoded_data.get(settings.SIMPLE_JWT['USER_ID_CLAIM'])
+            
+            user = await self.get_user(user_id)
+            if not user or not user.client_id:
+                await self.close()
+                return
+                
+            self.user = user
+            self.client_id = str(user.client_id)
+            
+            self.workspace_group = f'webrtc_workspace_{self.client_id}'
+            self.personal_group = f'webrtc_user_{user.email.lower()}' if user.email else f'webrtc_user_{user.username.lower()}'
+
+            await self.channel_layer.group_add(self.workspace_group, self.channel_name)
+            await self.channel_layer.group_add(self.personal_group, self.channel_name)
+
+            await self.accept()
+
+        except Exception as e:
+            await self.close()
+
+    @sync_to_async
+    def get_user(self, user_id):
+        try:
+            return UserRepository.get_user(id=user_id)
+        except User.DoesNotExist:
+            return None
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'workspace_group'):
+            await self.channel_layer.group_discard(self.workspace_group, self.channel_name)
+        if hasattr(self, 'personal_group'):
+            await self.channel_layer.group_discard(self.personal_group, self.channel_name)
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+            msg_type = data.get('type')
+            
+            target_group = None
+            if msg_type in ['offer', 'answer', 'ice_candidate', 'call_ended']:
+                recipient = data.get('recipient', '').lower()
+                target_group = f'webrtc_user_{recipient}'
+            
+            if target_group:
+                await self.channel_layer.group_send(
+                    target_group,
+                    {
+                        'type': 'webrtc_message',
+                        'message': data
+                    }
+                )
+        except Exception as e:
+            pass
+
+    async def webrtc_message(self, event):
+        message = event['message']
+        await self.send(text_data=json.dumps(message))

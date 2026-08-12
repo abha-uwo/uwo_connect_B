@@ -25,8 +25,8 @@ from .views import (
     OutlookConnectView, OutlookCallbackView, OutlookStatusView, OutlookSyncView, OutlookSendMailView, OutlookDisconnectView,
     OutlookCalendarEventsView, OutlookTeamsView, OutlookContactsView, OutlookExcelView,
     EmailAccountViewSet, EmailMessageViewSet, EmailAutoReplyViewSet, EmailAutomationWorkflowViewSet, EmailAnalyticsView, EmailComposeView,
-    WebRTCIceConfigView, WebRTCInitiateCallView, WebRTCCallSignalView, WebRTCHistoryView,
-    WebRTCActiveCallCheckView, WebRTCCallActionView,
+    WebRTCIceConfigView, WebRTCHistoryView,
+
     CallScheduleView, CallAISummaryView, CallAnalyticsView, HealthCheckView
 )
 from api.views.zoho_views import ZohoConnectView, ZohoCallbackView, ZohoDisconnectView, ZohoTestLeadView
@@ -251,14 +251,6 @@ urlpatterns = [
     # WebRTC & Calls Endpoints
     path('webrtc/config', WebRTCIceConfigView.as_view(), name='webrtc-config'),
     path('webrtc/config/', WebRTCIceConfigView.as_view()),
-    path('webrtc/call/initiate', WebRTCInitiateCallView.as_view(), name='webrtc-call-initiate'),
-    path('webrtc/call/initiate/', WebRTCInitiateCallView.as_view()),
-    path('webrtc/call/active-check', WebRTCActiveCallCheckView.as_view(), name='webrtc-call-active-check'),
-    path('webrtc/call/active-check/', WebRTCActiveCallCheckView.as_view()),
-    path('webrtc/call/action', WebRTCCallActionView.as_view(), name='webrtc-call-action'),
-    path('webrtc/call/action/', WebRTCCallActionView.as_view()),
-    path('webrtc/signal', WebRTCCallSignalView.as_view(), name='webrtc-signal'),
-    path('webrtc/signal/', WebRTCCallSignalView.as_view()),
     path('webrtc/history', WebRTCHistoryView.as_view(), name='webrtc-history'),
     path('webrtc/history/', WebRTCHistoryView.as_view()),
     path('calls/schedule', CallScheduleView.as_view(), name='calls-schedule'),
