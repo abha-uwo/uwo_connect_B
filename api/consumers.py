@@ -168,18 +168,20 @@ class WebRTCConsumer(AsyncWebsocketConsumer):
             user_id = decoded_data.get(settings.SIMPLE_JWT['USER_ID_CLAIM'])
             
             user = await self.get_user(user_id)
-            if not user or not user.client_id:
+            if not user:
                 await self.close()
                 return
                 
             self.user = user
-            self.client_id = str(user.client_id)
             
-            self.workspace_group = f'webrtc_workspace_{self.client_id}'
             self.personal_group = f'webrtc_user_{user.email.lower()}' if user.email else f'webrtc_user_{user.username.lower()}'
-
-            await self.channel_layer.group_add(self.workspace_group, self.channel_name)
             await self.channel_layer.group_add(self.personal_group, self.channel_name)
+
+            # If user has a client_id, add them to the workspace group
+            if user.client_id:
+                self.client_id = str(user.client_id)
+                self.workspace_group = f'webrtc_workspace_{self.client_id}'
+                await self.channel_layer.group_add(self.workspace_group, self.channel_name)
 
             await self.accept()
 
