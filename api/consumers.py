@@ -155,37 +155,62 @@ class TeamChatConsumer(AsyncWebsocketConsumer):
 
 class WebRTCConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        query_string = self.scope['query_string'].decode()
-        query_params = parse_qs(query_string)
-        token = query_params.get('token', [None])[0]
-
-        if not token:
-            await self.close()
-            return
-
         try:
-            decoded_data = jwt.decode(token, settings.SIMPLE_JWT['SIGNING_KEY'], algorithms=[settings.SIMPLE_JWT['ALGORITHM']])
-            user_id = decoded_data.get(settings.SIMPLE_JWT['USER_ID_CLAIM'])
-            
+            print("[WebRTC] Connection attempt started")
+            query_string = self.scope.get('query_string', b'').decode()
+            query_params = parse_qs(query_string)
+            token = query_params.get('token', [None])[0]
+
+            if not token or token == 'null' or token == 'undefined':
+                print("[WebRTC] No valid token provided")
+                await self.close()
+                return
+
+            try:
+                decoded_data = jwt.decode(token, settings.SIMPLE_JWT['SIGNING_KEY'], algorithms=[settings.SIMPLE_JWT['ALGORITHM']])
+                user_id = decoded_data.get(settings.SIMPLE_JWT['USER_ID_CLAIM'])
+            except Exception as e:
+                print(f"[WebRTC] JWT Decode Error: {e}")
+                await self.close()
+                return
+                
             user = await self.get_user(user_id)
             if not user:
+                print(f"[WebRTC] User {user_id} not found")
                 await self.close()
                 return
                 
             self.user = user
             
-            self.personal_group = f'webrtc_user_{user.email.lower()}' if user.email else f'webrtc_user_{user.username.lower()}'
+            # Safe email/username fallback
+            email = getattr(user, 'email', None) or ""
+            username = getattr(user, 'username', None) or ""
+            ident = email.lower() if email else username.lower()
+            if not ident:
+                ident = str(user_id)
+                
+            self.personal_group = f'webrtc_user_{ident}'
+            
+            if self.channel_layer is None:
+                print("[WebRTC] CHANNEL_LAYER IS NONE! Check settings.py")
+                await self.close()
+                return
+                
             await self.channel_layer.group_add(self.personal_group, self.channel_name)
 
-            # If user has a client_id, add them to the workspace group
-            if user.client_id:
-                self.client_id = str(user.client_id)
+            client_id = getattr(user, 'client_id', None)
+            if client_id:
+                self.client_id = str(client_id)
                 self.workspace_group = f'webrtc_workspace_{self.client_id}'
                 await self.channel_layer.group_add(self.workspace_group, self.channel_name)
 
             await self.accept()
+            print(f"[WebRTC] Successfully connected {ident}")
 
         except Exception as e:
+            import traceback
+            print(f"[WebRTC] Fatal Connect Error: {e}")
+            traceback.print_exc()
             await self.close()
 
     @sync_to_async
