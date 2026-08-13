@@ -25,7 +25,7 @@ steps:
     args:
       - 'run'
       - 'deploy'
-      - 'uwoconnect-backend'
+      - 'uwoconnectforrb'
       - '--image=gcr.io/$PROJECT_ID/uwoconnect-backend:latest'
       - '--region=asia-south1'
       - '--platform=managed'
