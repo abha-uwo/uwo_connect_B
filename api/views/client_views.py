@@ -11,7 +11,9 @@ from django.contrib.auth import authenticate
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.decorators import action
 from rest_framework.views import APIView
-from django.http import HttpResponse
+import os
+import json
+from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from ..serializers import RegisterSerializer, UserSerializer, ClientSerializer, AutomationSerializer, WorkflowSerializer, ContactSerializer, TemplateSerializer, CampaignSerializer, SupportMessageSerializer, AuditLogSerializer, TeamInviteSerializer, ProductSerializer, OrderSerializer
@@ -22,7 +24,9 @@ logger = logging.getLogger(__name__)
 from ..services.ai_service import get_ai_response, get_platform_assistance, get_rag_response, get_embedding, chunk_text, find_relevant_chunks, get_ai_draft
 from rest_framework.permissions import BasePermission
 from .webhook_views import WhatsAppWebhookView, FacebookInstagramWebhookView
+import logging
 
+logger = logging.getLogger(__name__)
 def get_tenant_client(request):
     if not request.user or not request.user.is_authenticated:
         return None
@@ -85,6 +89,78 @@ class ClientViewSet(viewsets.ModelViewSet):
             return Response({"error": result["error"]}, status=result["status_code"])
         return Response({"status": result["status"], "value": result["value"]})
 
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def update_whatsapp_profile_picture(self, request, pk=None):
+        client = self.get_object()
+        
+        # Verify ownership
+        if request.user.role != 'ADMIN' and request.user.client_id != client.id:
+            return Response({"error": "Unauthorized"}, status=403)
+
+        if not client.whatsapp_phone_number_id or not client.whatsapp_access_token:
+            return Response({"error": "WhatsApp not connected"}, status=400)
+
+        image_file = request.FILES.get('profile_picture')
+        if not image_file:
+            return Response({"error": "No image provided. Please send file in 'profile_picture' form field."}, status=400)
+
+        app_id = os.getenv('FACEBOOK_APP_ID')
+        if not app_id:
+            return Response({"error": "Server is missing FACEBOOK_APP_ID"}, status=500)
+
+        file_length = image_file.size
+        file_type = image_file.content_type
+
+        # 1. Create Resumable Upload Session
+        session_url = f"https://graph.facebook.com/{os.getenv('WHATSAPP_API_VERSION', 'v20.0')}/{app_id}/uploads?file_length={file_length}&file_type={file_type}"
+        headers = {
+            "Authorization": f"Bearer {client.whatsapp_access_token}"
+        }
+        
+        try:
+            res = requests.post(session_url, headers=headers)
+            res_data = res.json()
+            if 'id' not in res_data:
+                return Response({"error": "Failed to create upload session with Meta", "details": res_data}, status=400)
+                
+            upload_session_id = res_data['id']
+
+            # 2. Upload file binary data
+            upload_url = f"https://graph.facebook.com/{os.getenv('WHATSAPP_API_VERSION', 'v20.0')}/{upload_session_id}"
+            upload_headers = {
+                "Authorization": f"Bearer {client.whatsapp_access_token}",
+                "file_offset": "0"
+            }
+            
+            image_file.seek(0)
+            upload_res = requests.post(upload_url, headers=upload_headers, data=image_file.read())
+            upload_data = upload_res.json()
+            if 'h' not in upload_data:
+                return Response({"error": "Failed to upload file data to Meta", "details": upload_data}, status=400)
+                
+            file_handle = upload_data['h']
+
+            # 3. Update WhatsApp Business Profile
+            profile_url = f"https://graph.facebook.com/{os.getenv('WHATSAPP_API_VERSION', 'v20.0')}/{client.whatsapp_phone_number_id}/whatsapp_business_profile"
+            profile_payload = {
+                "messaging_product": "whatsapp",
+                "profile_picture_handle": file_handle
+            }
+            profile_headers = {
+                "Authorization": f"Bearer {client.whatsapp_access_token}",
+                "Content-Type": "application/json"
+            }
+            profile_res = requests.post(profile_url, headers=profile_headers, json=profile_payload)
+            profile_data = profile_res.json()
+
+            if profile_res.status_code == 200 and profile_data.get('success'):
+                return Response({"status": "success", "message": "Profile picture updated successfully on WhatsApp!"})
+            else:
+                return Response({"error": "Failed to update WhatsApp profile", "details": profile_data}, status=400)
+                
+        except Exception as e:
+            return Response({"error": f"An internal error occurred: {str(e)}"}, status=500)
+
 
 class ContactViewSet(viewsets.ModelViewSet):
     serializer_class = ContactSerializer
@@ -94,7 +170,29 @@ class ContactViewSet(viewsets.ModelViewSet):
         client = get_tenant_client(self.request)
         if self.request.user.role == 'ADMIN' and not client:
             return Contact.objects.none()
-        return ContactRepository.filter_contacts(client=client)
+        qs = ContactRepository.filter_contacts(client=client)
+
+        if self.request.user.role != 'CLIENT' and self.request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
+            assigned = self.request.user.assigned_social_channels or []
+            allowed_channels = []
+            if 'wa_default' in assigned: allowed_channels.append('WHATSAPP')
+            if 'ig_main' in assigned: allowed_channels.append('INSTAGRAM')
+            if 'fb_page' in assigned: allowed_channels.append('FACEBOOK')
+            if 'gmail_main' in assigned: allowed_channels.append('GMAIL')
+            
+            allowed_msg_addresses = Message.objects.filter(
+                client=client, 
+                channel__in=allowed_channels
+            ).values_list('from_address', 'to_address')
+            
+            addresses = set()
+            for frm, to in allowed_msg_addresses:
+                addresses.add(frm)
+                addresses.add(to)
+            
+            qs = qs.filter(platform_id__in=addresses)
+            
+        return qs
 
     def perform_create(self, serializer):
         client = get_tenant_client(self.request)
@@ -178,6 +276,7 @@ class ClientStatsView(APIView):
             client.google_sheets_enabled,
             client.google_docs_enabled,
             client.google_slides_enabled,
+            client.zoho_enabled,
         ]
         connectors_count = sum(1 for flag in connector_flags if flag)
 
@@ -186,6 +285,7 @@ class ClientStatsView(APIView):
         projects_count = WorkflowRepository.filter_workflows(client=client).count()
 
         # Team Members: users linked to this client
+        from ..models import User
         team_members_count = User.objects.filter(client=client).count()
 
         # Knowledge PDFs
@@ -195,7 +295,6 @@ class ClientStatsView(APIView):
         # Products
         from ..repositories.product_repository import ProductRepository
         products_count = ProductRepository.filter_products(client=client).count()
-        
         return Response({
             "totalConversations": total_conversations,
             "automationRuns": automation_runs,
@@ -261,8 +360,19 @@ class ClientMessagesView(APIView):
         client = get_tenant_client(request)
         if not client:
             return Response([])
-        
-        messages = MessageRepository.filter_messages(client=client).order_by('-created_at')[:1000]
+        messages = MessageRepository.filter_messages(client=client)
+
+        if request.user.role != 'CLIENT' and request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
+            assigned = request.user.assigned_social_channels or []
+            allowed_channels = []
+            if 'wa_default' in assigned: allowed_channels.append('WHATSAPP')
+            if 'ig_main' in assigned: allowed_channels.append('INSTAGRAM')
+            if 'fb_page' in assigned: allowed_channels.append('FACEBOOK')
+            if 'gmail_main' in assigned: allowed_channels.append('GMAIL')
+            
+            messages = messages.filter(channel__in=allowed_channels)
+
+        messages = messages.order_by('-created_at')[:1000]
         data = []
         for msg in messages:
             data.append({
@@ -279,98 +389,6 @@ class ClientMessagesView(APIView):
             })
         return Response(data)
 
-    def post(self, request):
-        client = get_tenant_client(request)
-        if not client:
-            return Response({"detail": "Client not found"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        to_number = request.data.get('to_number')
-        body = request.data.get('body')
-        channel = (request.data.get('channel') or 'WHATSAPP').upper()
-        message_type = (request.data.get('message_type') or 'OUTGOING').upper()
-        
-        if not to_number or not body:
-            return Response({"detail": "to_number and body are required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        raw_to = str(to_number).strip()
-        new_msg = None
-
-        if message_type == 'OUTGOING':
-            try:
-                from ..services.meta_webhook_service import MetaWebhookService
-                if channel == 'WHATSAPP':
-                    phone_id = client.whatsapp_phone_number_id or '100000000000000'
-                    new_msg = MetaWebhookService.send_whatsapp_message(client, raw_to, body, phone_id)
-                elif channel in ['FACEBOOK', 'INSTAGRAM']:
-                    new_msg = MetaWebhookService.send_fb_ig_message(client, channel, raw_to, body)
-            except Exception as e:
-                print("Error dispatching external message:", e)
-
-        if not new_msg:
-            new_msg = MessageRepository.create_message(
-                client=client,
-                channel=channel,
-                from_address=request.user.username or 'SYSTEM',
-                to_address=raw_to,
-                body=body,
-                message_type=message_type,
-                status='SENT'
-            )
-
-        return Response({
-            "id": str(new_msg.id),
-            "from_address": new_msg.from_address,
-            "to_address": new_msg.to_address,
-            "body": new_msg.body,
-            "channel": new_msg.channel,
-            "message_type": new_msg.message_type,
-            "status": new_msg.status,
-            "metadata": new_msg.metadata or {},
-            "created_at": new_msg.created_at
-        }, status=status.HTTP_201_CREATED)
-
-class MediaProxyView(APIView):
-    """Proxy endpoint to stream WhatsApp/Meta media files to the frontend with correct Content-Type."""
-    permission_classes = []
-    authentication_classes = []
-
-    def get(self, request):
-        media_id = request.query_params.get('media_id')
-        media_url = request.query_params.get('media_url')
-        
-        client = get_tenant_client(request)
-        if not client:
-            client = Client.objects.filter(whatsapp_access_token__isnull=False).exclude(whatsapp_access_token='').first()
-
-        token = client.whatsapp_access_token if client else None
-        if media_id and token:
-            try:
-                url_res = requests.get(
-                    f"https://graph.facebook.com/v18.0/{media_id}",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=10
-                )
-                if url_res.status_code == 200:
-                    media_url = url_res.json().get('url')
-            except Exception as e:
-                logger.error("Failed to get media URL for %s: %s", media_id, e)
-
-        if media_url:
-            try:
-                headers = {"Authorization": f"Bearer {token}"} if (token and "facebook.com" in media_url) else {}
-                file_res = requests.get(media_url, headers=headers, timeout=30)
-                if file_res.status_code == 200:
-                    content_type = file_res.headers.get('Content-Type', 'application/octet-stream')
-                    from django.http import HttpResponse
-                    response = HttpResponse(file_res.content, content_type=content_type)
-                    filename = request.query_params.get('filename')
-                    if filename:
-                        response['Content-Disposition'] = f'inline; filename="{filename}"'
-                    return response
-            except Exception as e:
-                logger.error("Failed downloading media from %s: %s", media_url, e)
-
-        return Response({"error": "Media file not found or download failed."}, status=404)
 
     def post(self, request):
         client = get_tenant_client(request)
@@ -475,6 +493,49 @@ class MediaProxyView(APIView):
             return Response({"error": f"Unsupported channel: {channel}"}, status=400)
             
         return Response({"status": "sent"})
+
+class MediaProxyView(APIView):
+    """Proxy endpoint to stream WhatsApp/Meta media files to the frontend with correct Content-Type."""
+    permission_classes = []
+    authentication_classes = []
+
+    def get(self, request):
+        media_id = request.query_params.get('media_id')
+        media_url = request.query_params.get('media_url')
+        
+        client = get_tenant_client(request)
+        if not client:
+            client = Client.objects.filter(whatsapp_access_token__isnull=False).exclude(whatsapp_access_token='').first()
+
+        token = client.whatsapp_access_token if client else None
+        if media_id and token:
+            try:
+                url_res = requests.get(
+                    f"https://graph.facebook.com/v18.0/{media_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10
+                )
+                if url_res.status_code == 200:
+                    media_url = url_res.json().get('url')
+            except Exception as e:
+                logger.error("Failed to get media URL for %s: %s", media_id, e)
+
+        if media_url:
+            try:
+                headers = {"Authorization": f"Bearer {token}"} if (token and "facebook.com" in media_url) else {}
+                file_res = requests.get(media_url, headers=headers, timeout=30)
+                if file_res.status_code == 200:
+                    content_type = file_res.headers.get('Content-Type', 'application/octet-stream')
+                    from django.http import HttpResponse
+                    response = HttpResponse(file_res.content, content_type=content_type)
+                    filename = request.query_params.get('filename')
+                    if filename:
+                        response['Content-Disposition'] = f'inline; filename="{filename}"'
+                    return response
+            except Exception as e:
+                logger.error("Failed downloading media from %s: %s", media_url, e)
+
+        return Response({"error": "Media file not found or download failed."}, status=404)
 
 class AuditLogMixin:
     def get_module_name(self):

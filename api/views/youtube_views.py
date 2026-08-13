@@ -432,6 +432,12 @@ class YouTubeVideosView(APIView):
                     "url": f"https://www.youtube.com/watch?v={vid_id}",
                 })
 
+            # Add mock videos from db if any
+            db_videos = client.youtube_config.get("videos", [])
+            for db_v in db_videos:
+                if not any(v["id"] == db_v["id"] for v in videos):
+                    videos.append(db_v)
+
             return Response({"videos": videos, "total": len(videos)})
 
         except Exception as e:
@@ -503,6 +509,15 @@ class YouTubeCommentsView(APIView):
                     "reply_count": reply_count,
                     "replies": replies_list,
                 })
+            
+            # If no comments from YouTube, check if this is a mock video in DB with mock comments
+            if not comments:
+                db_videos = client.youtube_config.get("videos", [])
+                for db_v in db_videos:
+                    if db_v.get("id") == video_id and "mock_comments" in db_v:
+                        comments = db_v["mock_comments"]
+                        break
+
             return Response({"comments": comments})
         except Exception as e:
             return Response({"error": str(e)}, status=500)

@@ -33,6 +33,7 @@ from .views import (
     ProductCheckoutVerifyView, ProductCheckoutWebhookView, ClientProductSalesView,
     ClientSalesDashboardView, ClientRefundView,
 )
+from api.views.zoho_views import ZohoConnectView, ZohoCallbackView, ZohoDisconnectView, ZohoTestLeadView
 
 from .views.sales_document_views import (
     SalesDocumentViewSet, SalesDocumentTemplateViewSet, SalesAnalyticsView,
@@ -218,6 +219,16 @@ urlpatterns = [
     path('youtube/delete/', YouTubeDeleteView.as_view()),
     path('google-slides/disconnect/', GoogleSlidesDisconnectView.as_view()),
     
+    # Zoho Integration
+    path('zoho/connect', ZohoConnectView.as_view(), name='zoho-connect'),
+    path('zoho/connect/', ZohoConnectView.as_view()),
+    path('zoho/callback', ZohoCallbackView.as_view(), name='zoho-callback'),
+    path('zoho/callback/', ZohoCallbackView.as_view()),
+    path('zoho/disconnect', ZohoDisconnectView.as_view(), name='zoho-disconnect'),
+    path('zoho/disconnect/', ZohoDisconnectView.as_view()),
+    path('zoho/test-lead', ZohoTestLeadView.as_view(), name='zoho-test-lead'),
+    path('zoho/test-lead/', ZohoTestLeadView.as_view()),
+    
     # Google News Integration
     path('google-news/settings', GoogleNewsSettingsView.as_view(), name='google-news-settings'),
     path('google-news/settings/', GoogleNewsSettingsView.as_view()),
@@ -227,7 +238,6 @@ urlpatterns = [
     path('google-news/summarize/', GoogleNewsAISummarizeView.as_view()),
     path('google-news/send-alert', GoogleNewsSendAlertView.as_view(), name='google-news-send-alert'),
     path('google-news/send-alert/', GoogleNewsSendAlertView.as_view()),
-
     # Public endpoints
     path('public/calendar/<str:client_id>/slots', PublicCalendarSlotsView.as_view(), name='public-calendar-slots'),
     path('public/calendar/<str:client_id>/book', PublicCalendarBookView.as_view(), name='public-calendar-book'),
@@ -257,14 +267,6 @@ urlpatterns = [
     # WebRTC & Calls Endpoints
     path('webrtc/config', WebRTCIceConfigView.as_view(), name='webrtc-config'),
     path('webrtc/config/', WebRTCIceConfigView.as_view()),
-    path('webrtc/call/initiate', WebRTCInitiateCallView.as_view(), name='webrtc-call-initiate'),
-    path('webrtc/call/initiate/', WebRTCInitiateCallView.as_view()),
-    path('webrtc/call/active-check', WebRTCActiveCallCheckView.as_view(), name='webrtc-call-active-check'),
-    path('webrtc/call/active-check/', WebRTCActiveCallCheckView.as_view()),
-    path('webrtc/call/action', WebRTCCallActionView.as_view(), name='webrtc-call-action'),
-    path('webrtc/call/action/', WebRTCCallActionView.as_view()),
-    path('webrtc/signal', WebRTCCallSignalView.as_view(), name='webrtc-signal'),
-    path('webrtc/signal/', WebRTCCallSignalView.as_view()),
     path('webrtc/history', WebRTCHistoryView.as_view(), name='webrtc-history'),
     path('webrtc/history/', WebRTCHistoryView.as_view()),
     path('calls/schedule', CallScheduleView.as_view(), name='calls-schedule'),

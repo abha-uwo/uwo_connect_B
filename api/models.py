@@ -30,6 +30,7 @@ class Client(models.Model):
     google_sheets_enabled = models.BooleanField(default=False)
     google_docs_enabled = models.BooleanField(default=False)
     google_slides_enabled = models.BooleanField(default=False)
+    zoho_enabled = models.BooleanField(default=False)
     youtube_enabled = models.BooleanField(default=False)
     google_news_enabled = models.BooleanField(default=False)
     outlook_enabled = models.BooleanField(default=False)
@@ -59,6 +60,7 @@ class Client(models.Model):
     google_sheets_config = models.JSONField(default=dict, blank=True)
     google_docs_config = models.JSONField(default=dict, blank=True)
     google_slides_config = models.JSONField(default=dict, blank=True)
+    zoho_config = models.JSONField(default=dict, blank=True)
     youtube_config = models.JSONField(default=dict, blank=True)
     google_news_config = models.JSONField(default=dict, blank=True)
     outlook_config = models.JSONField(default=dict, blank=True)
@@ -411,6 +413,7 @@ class Template(models.Model):
 class Campaign(models.Model):
     STATUS_CHOICES = [
         ('DRAFT', 'Draft'),
+        ('SCHEDULED', 'Scheduled'),
         ('SENDING', 'Sending'),
         ('PAUSED', 'Paused'),
         ('COMPLETED', 'Completed'),
@@ -422,14 +425,16 @@ class Campaign(models.Model):
     category = models.CharField(max_length=100, default='Marketing')
     tags = models.JSONField(default=list, blank=True)
     priority = models.CharField(max_length=20, default='NORMAL')
-    
+
     # Message Content
+    channel = models.CharField(max_length=50, default='WHATSAPP')  # kept for backward compat
+    body = models.TextField(null=True, blank=True)  # kept for backward compat
     template = models.ForeignKey(Template, on_delete=models.SET_NULL, null=True, blank=True)
     message_body = models.TextField(null=True, blank=True)
     attachments = models.JSONField(default=list, blank=True)
 
     # Multi-Channel & Audience
-    platforms = models.JSONField(default=list, blank=True) # ['WHATSAPP', 'GMAIL', 'SMS', 'TELEGRAM', 'INSTAGRAM']
+    platforms = models.JSONField(default=list, blank=True)  # ['WHATSAPP', 'GMAIL', 'SMS', 'TELEGRAM', 'INSTAGRAM']
     audience_filter = models.CharField(max_length=50, default='ALL') # 'ALL', 'NEW', 'WON', etc.
 
     # Delivery & Settings
@@ -456,6 +461,28 @@ class Campaign(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.status})"
+
+class CampaignFollowUp(models.Model):
+    campaign = models.OneToOneField(Campaign, on_delete=models.CASCADE, related_name='follow_up')
+    delay_hours = models.IntegerField(default=24)
+    followup_template = models.ForeignKey(Template, on_delete=models.SET_NULL, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"FollowUp for {self.campaign.name} ({self.delay_hours}h)"
+
+class FollowUpLog(models.Model):
+    followup = models.ForeignKey(CampaignFollowUp, on_delete=models.CASCADE, related_name='logs')
+    contact = models.ForeignKey(Contact, on_delete=models.CASCADE)
+    status = models.CharField(max_length=50, default='SENT')
+    sent_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('followup', 'contact')
+
+    def __str__(self):
+        return f"FollowUp sent to {self.contact.phone_number}"
 
 class SupportMessage(models.Model):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='support_messages')

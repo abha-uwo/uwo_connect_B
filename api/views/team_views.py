@@ -142,8 +142,8 @@ class WorkReportView(APIView):
             return Response([], status=200)
         
         qs = WorkReport.objects.filter(client=request.user.client)
-        # If regular employee, only show their reports unless manager/admin
-        if request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
+        # If regular employee and NOT the account owner (CLIENT), only show their reports
+        if request.user.role != 'CLIENT' and request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
             qs = qs.filter(employee=request.user)
             
         serializer = WorkReportSerializer(qs.order_by('-report_date'), many=True)

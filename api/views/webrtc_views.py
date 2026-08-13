@@ -22,7 +22,6 @@ def cleanup_stale_sessions():
         status='CONNECTED', created_at__lt=cutoff2
     ).delete()
 
-
 class WebRTCIceConfigView(APIView):
     """
     Returns STUN/TURN server configuration for voice & video call sessions.

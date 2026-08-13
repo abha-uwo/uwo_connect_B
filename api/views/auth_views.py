@@ -332,11 +332,11 @@ class InstagramEmbeddedSignupView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        code = request.data.get('code')
         access_token = request.data.get('access_token')
 
         import os
         import requests
+        import datetime
         
         client_id = os.getenv('FACEBOOK_APP_ID')
         client_secret = os.getenv('FACEBOOK_APP_SECRET')
@@ -344,80 +344,76 @@ class InstagramEmbeddedSignupView(APIView):
         if not client_id or not client_secret:
             return Response({"error": "Facebook App credentials not configured on server."}, status=500)
 
-        long_lived_token = None
+        if not access_token:
+            return Response({"error": "No access_token provided"}, status=400)
 
-        if code:
-            token_url = "https://graph.facebook.com/v20.0/oauth/access_token"
-            token_payload = {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": "https://uwoconnect.aisa24.com/client/channels",
-                "code": code
+        # Exchange for Long-Lived Token
+        ll_res = requests.get(
+            "https://graph.facebook.com/v20.0/oauth/access_token",
+            params={
+                "grant_type":        "fb_exchange_token",
+                "client_id":         client_id,
+                "client_secret":     client_secret,
+                "fb_exchange_token": access_token,
             }
-            token_res = requests.get(token_url, params=token_payload)
-            token_data = token_res.json()
-            if "error" in token_data:
-                return Response({"error": "Failed to exchange code", "details": token_data}, status=400)
-            long_lived_token = token_data.get('access_token')
-            
-        elif access_token:
-            ll_res = requests.get(
-                "https://graph.facebook.com/v20.0/oauth/access_token",
-                params={
-                    "grant_type":        "fb_exchange_token",
-                    "client_id":         client_id,
-                    "client_secret":     client_secret,
-                    "fb_exchange_token": access_token,
-                }
-            )
-            ll_data = ll_res.json()
-            long_lived_token = ll_data.get("access_token", access_token)
-        else:
-            return Response({"error": "No code or access_token provided"}, status=400)
-
-        accounts_url = f"https://graph.facebook.com/v20.0/me/accounts?fields=id,name,access_token,instagram_business_account&access_token={long_lived_token}"
+        )
+        ll_data = ll_res.json()
+        long_lived_token = ll_data.get("access_token", access_token)
+        
+        # Fetch connected pages and their Instagram accounts
+        accounts_url = f"https://graph.facebook.com/v20.0/me/accounts?fields=id,name,access_token,instagram_business_account{{id,username,name}}&access_token={long_lived_token}"
         accounts_res = requests.get(accounts_url)
         accounts_data = accounts_res.json()
         
         if "error" in accounts_data or not accounts_data.get('data'):
             return Response({"error": "Could not find connected Facebook Pages", "details": accounts_data}, status=400)
             
+        # Find the first page that has an Instagram Business Account attached
         ig_account = None
+        page_access_token = long_lived_token
         fb_page_id = None
         fb_page_name = None
-        page_access_token = long_lived_token
         
-        for page in accounts_data.get('data', []):
+        for page in accounts_data['data']:
             if 'instagram_business_account' in page:
-                ig_account = page['instagram_business_account']['id']
-                fb_page_id = page['id']
-                fb_page_name = page.get('name', 'Facebook Page')
+                ig_account = page['instagram_business_account']
                 page_access_token = page.get('access_token', long_lived_token)
+                fb_page_id = page['id']
+                fb_page_name = page.get('name')
                 break
                 
         if not ig_account:
-            return Response({"error": "No Instagram Business Account linked to the connected Facebook Pages."}, status=400)
-            
-        ig_url = f"https://graph.facebook.com/v20.0/{ig_account}?fields=username,name&access_token={long_lived_token}"
-        ig_res = requests.get(ig_url).json()
-        ig_username = ig_res.get('username', ig_res.get('name', fb_page_name))
-            
-        import datetime
+            return Response({"error": "No linked Instagram Business Account found on your Facebook Pages. Please link your Instagram account to your Facebook Page first."}, status=400)
+
         client = request.user.client
+        
+        # Save Instagram config
         client.instagram_config = {
             "access_token": page_access_token,
-            "instagram_business_id": ig_account,
+            "instagram_business_id": ig_account['id'],
             "page_id": fb_page_id,
-            "page_name": ig_username,
+            "page_name": ig_account.get('username', ig_account.get('name', 'Instagram Account')),
             "last_connected": datetime.datetime.utcnow().isoformat(),
             "last_updated": datetime.datetime.utcnow().isoformat(),
         }
         client.instagram_enabled = True
+        
+        # Save Facebook config since we have it
+        client.facebook_config = {
+            "access_token": page_access_token,
+            "page_id": fb_page_id,
+            "page_name": fb_page_name,
+            "last_connected": datetime.datetime.utcnow().isoformat(),
+            "last_updated": datetime.datetime.utcnow().isoformat(),
+        }
+        client.facebook_enabled = True
+        
         client.save()
         
         return Response({
-            "message": "Instagram Business connected successfully",
-            "instagram_config": client.instagram_config
+            "message": "Instagram connected successfully via Facebook",
+            "instagram_config": client.instagram_config,
+            "facebook_config": client.facebook_config
         })
 
 class FacebookEmbeddedSignupView(APIView):

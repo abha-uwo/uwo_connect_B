@@ -37,10 +37,4 @@ USER appuser
 EXPOSE 8080
 
 # Entrypoint script for database migration & static files + server launch
-CMD exec gunicorn core.wsgi:application \
-    --bind 0.0.0.0:${PORT:-8080} \
-    --workers 4 \
-    --threads 8 \
-    --timeout 120 \
-    --access-logfile - \
-    --error-logfile -
+CMD exec daphne -b 0.0.0.0 -p ${PORT:-8080} core.asgi:application

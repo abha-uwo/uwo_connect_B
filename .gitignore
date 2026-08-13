@@ -153,6 +153,10 @@ cython_debug/
 
 firebase-service-account.json
 .env
+
+yt_data.json
+temp_check_youtube.py
+yt_data.json
 *.json.key
 
 .git-rewrite/

@@ -30,6 +30,7 @@ class ClientSerializer(serializers.ModelSerializer):
     google_sheets_config = serializers.SerializerMethodField()
     google_docs_config = serializers.SerializerMethodField()
     google_slides_config = serializers.SerializerMethodField()
+    zoho_config = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
@@ -101,6 +102,14 @@ class ClientSerializer(serializers.ModelSerializer):
             'default_presentation_url', 'auto_generate_pitch_decks',
             'auto_generate_catalog_decks', 'presentations_created_count',
             'last_sync_time', 'connected_at', 'recent_presentations',
+        }
+        return {k: v for k, v in config.items() if k in safe_keys}
+
+    def get_zoho_config(self, obj):
+        """Return Zoho config without sensitive OAuth tokens."""
+        config = obj.zoho_config or {}
+        safe_keys = {
+            'account_email', 'domain', 'connected_at', 'last_sync_time'
         }
         return {k: v for k, v in config.items() if k in safe_keys}
 
@@ -239,11 +248,16 @@ class TemplateSerializer(serializers.ModelSerializer):
 class CampaignSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
+    template = serializers.PrimaryKeyRelatedField(queryset=Template.objects.all(), required=False, allow_null=True)
+    has_followup = serializers.SerializerMethodField()
 
     class Meta:
         model = Campaign
         fields = '__all__'
         read_only_fields = ('client', 'created_at', 'updated_at')
+
+    def get_has_followup(self, obj):
+        return hasattr(obj, 'follow_up') and obj.follow_up.is_active
 
 class KnowledgeDocumentSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)

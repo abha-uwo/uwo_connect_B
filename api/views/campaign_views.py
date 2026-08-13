@@ -106,7 +106,10 @@ class CampaignViewSet(viewsets.ModelViewSet):
         return CampaignRepository.filter_campaigns(client=client).order_by('-created_at')
 
     def perform_create(self, serializer):
+        from django.utils import timezone
         client = get_tenant_client(self.request)
+
+        # Resolve template from request data (support both 'template' and 'template_id' keys)
         template_id = self.request.data.get('template') or self.request.data.get('template_id')
         template_obj = None
         if template_id:
@@ -114,11 +117,31 @@ class CampaignViewSet(viewsets.ModelViewSet):
                 template_obj = Template.objects.get(id=template_id)
             except Exception as ex:
                 print(f"Error resolving template ID {template_id}: {ex}")
-        campaign = serializer.save(client=client, template=template_obj, status='SENDING')
+
+        scheduled_at = serializer.validated_data.get('scheduled_at')
+        if scheduled_at and scheduled_at > timezone.now():
+            campaign = serializer.save(client=client, template=template_obj, status='SCHEDULED')
+        else:
+            campaign = serializer.save(client=client, template=template_obj, status='SENDING')
+
+        # Create optional follow-up
+        delay_hours = self.request.data.get('followup_delay_hours')
+        followup_template_id = self.request.data.get('followup_template_id')
+        if delay_hours and followup_template_id:
+            from ..models import CampaignFollowUp, Template
+            fu_template = Template.objects.filter(id=followup_template_id, client=client).first()
+            if fu_template:
+                CampaignFollowUp.objects.create(
+                    campaign=campaign,
+                    delay_hours=int(delay_hours),
+                    followup_template=fu_template
+                )
+
         AdminService.log_admin_action(self.request, campaign, 'Campaigns', 'CREATE', after_value=str(serializer.data))
-        
-        thread = threading.Thread(target=self.process_campaign, args=(campaign.id,))
-        thread.start()
+        if campaign.status == 'SENDING':
+            thread = threading.Thread(target=self.process_campaign, args=(campaign.id,))
+            thread.start()
+
 
     def perform_update(self, serializer):
         before_instance = self.get_object()

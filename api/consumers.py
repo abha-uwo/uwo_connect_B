@@ -152,3 +152,104 @@ class TeamChatConsumer(AsyncWebsocketConsumer):
             'type': 'new_team_message',
             'message': message
         }))
+
+import logging
+logger = logging.getLogger(__name__)
+
+class WebRTCConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        try:
+            logger.error(f"[WebRTC] Connection attempt started for scope: {self.scope.get('query_string', b'').decode()}")
+            query_string = self.scope.get('query_string', b'').decode()
+            query_params = parse_qs(query_string)
+            token = query_params.get('token', [None])[0]
+
+            if not token or token == 'null' or token == 'undefined':
+                logger.error("[WebRTC] No valid token provided")
+                await self.close()
+                return
+
+            try:
+                decoded_data = jwt.decode(token, settings.SIMPLE_JWT['SIGNING_KEY'], algorithms=[settings.SIMPLE_JWT['ALGORITHM']])
+                user_id = decoded_data.get(settings.SIMPLE_JWT['USER_ID_CLAIM'])
+            except Exception as e:
+                logger.error(f"[WebRTC] JWT Decode Error: {e}")
+                await self.close()
+                return
+                
+            user = await self.get_user(user_id)
+            if not user:
+                logger.error(f"[WebRTC] User {user_id} not found")
+                await self.close()
+                return
+                
+            self.user = user
+            
+            # Safe email/username fallback
+            email = getattr(user, 'email', None) or ""
+            username = getattr(user, 'username', None) or ""
+            ident = email.lower() if email else username.lower()
+            if not ident:
+                ident = str(user_id)
+                
+            self.personal_group = f'webrtc_user_{ident}'
+            
+            if self.channel_layer is None:
+                logger.error("[WebRTC] CHANNEL_LAYER IS NONE! Check settings.py")
+                await self.close()
+                return
+                
+            await self.channel_layer.group_add(self.personal_group, self.channel_name)
+
+            client_id = getattr(user, 'client_id', None)
+            if client_id:
+                self.client_id = str(client_id)
+                self.workspace_group = f'webrtc_workspace_{self.client_id}'
+                await self.channel_layer.group_add(self.workspace_group, self.channel_name)
+
+            await self.accept()
+            logger.error(f"[WebRTC] Successfully connected {ident}")
+
+        except Exception as e:
+            import traceback
+            logger.error(f"[WebRTC] Fatal Connect Error: {e}")
+            logger.error(traceback.format_exc())
+            await self.close()
+
+    @sync_to_async
+    def get_user(self, user_id):
+        try:
+            return UserRepository.get_user(id=user_id)
+        except User.DoesNotExist:
+            return None
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'workspace_group'):
+            await self.channel_layer.group_discard(self.workspace_group, self.channel_name)
+        if hasattr(self, 'personal_group'):
+            await self.channel_layer.group_discard(self.personal_group, self.channel_name)
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+            msg_type = data.get('type')
+            
+            target_group = None
+            if msg_type in ['offer', 'answer', 'ice_candidate', 'call_ended']:
+                recipient = data.get('recipient', '').lower()
+                target_group = f'webrtc_user_{recipient}'
+            
+            if target_group:
+                await self.channel_layer.group_send(
+                    target_group,
+                    {
+                        'type': 'webrtc_message',
+                        'message': data
+                    }
+                )
+        except Exception as e:
+            pass
+
+    async def webrtc_message(self, event):
+        message = event['message']
+        await self.send(text_data=json.dumps(message))

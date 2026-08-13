@@ -11,9 +11,29 @@ class CampaignService:
             campaign = CampaignRepository.get_campaign(id=campaign_id)
             client = campaign.client
             template = campaign.template
-            
-            token = client.whatsapp_access_token
-            
+
+            channel = getattr(campaign, 'channel', 'WHATSAPP')
+
+            if channel == 'WHATSAPP':
+                token = client.whatsapp_access_token
+                if not token or not client.whatsapp_phone_number_id:
+                    if not template and not getattr(campaign, 'message_body', None):
+                        campaign.status = 'FAILED'
+                        campaign.save()
+                        return
+            elif channel in ['FACEBOOK', 'INSTAGRAM']:
+                body = getattr(campaign, 'body', '') or getattr(campaign, 'message_body', '')
+                fb_token = client.facebook_config.get('access_token') if channel == 'FACEBOOK' else client.instagram_config.get('access_token')
+                page_id = client.facebook_config.get('page_id') if channel == 'FACEBOOK' else client.instagram_config.get('ig_id')
+                if not body or not fb_token or not page_id:
+                    campaign.status = 'FAILED'
+                    campaign.save()
+                    return
+            else:
+                campaign.status = 'FAILED'
+                campaign.save()
+                return
+
             # Determine audience
             if campaign.audience_filter == 'ALL':
                 contacts = ContactRepository.filter_contacts(client=client)
@@ -33,99 +53,137 @@ class CampaignService:
                 name = contact.name or f"Contact #{contact.id}"
                 phone = contact.phone_number or ""
 
-                if not phone:
-                    campaign.total_failed += 1
-                    campaign.failed_recipients.append({
-                        "id": str(contact.id),
-                        "name": name,
-                        "phone": "N/A",
-                        "platform": "WhatsApp",
-                        "reason": "Missing Phone Number",
-                        "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                        "retry_count": 0,
-                        "status": "FAILED"
-                    })
-                    campaign.save()
-                    continue
-
-                # Prepare payload (Template or Text message)
-                if template:
-                    payload = {
-                        "messaging_product": "whatsapp",
-                        "to": phone,
-                        "type": "template",
-                        "template": {
-                            "name": template.name,
-                            "language": {
-                                "code": template.language
-                            }
-                        }
-                    }
-                else:
-                    msg_text = campaign.message_body or "Hello from UWOConnect!"
-                    cust_name = contact.name or "Customer"
-                    first_name = cust_name.split()[0] if cust_name else "Customer"
-                    msg_text = msg_text.replace("{{first_name}}", first_name)\
-                                       .replace("{{name}}", cust_name)\
-                                       .replace("{{phone}}", phone)\
-                                       .replace("{{email}}", getattr(contact, 'email', '') or '')\
-                                       .replace("{{company}}", getattr(client, 'business_name', '') or 'UWOConnect')
-
-                    payload = {
-                        "messaging_product": "whatsapp",
-                        "to": phone,
-                        "type": "text",
-                        "text": {
-                            "preview_url": True,
-                            "body": msg_text
-                        }
-                    }
-
                 try:
                     from ..integrations.meta_integration import MetaIntegration
-                    if token and client.whatsapp_phone_number_id:
-                        res = MetaIntegration.send_whatsapp_message(client.whatsapp_phone_number_id, token, payload)
-                        if res.status_code in [200, 201]:
-                            campaign.total_sent += 1
-                            campaign.total_delivered += 1
+
+                    if channel == 'WHATSAPP':
+                        if not phone:
+                            campaign.total_failed += 1
+                            campaign.failed_recipients.append({
+                                "id": str(contact.id),
+                                "name": name,
+                                "phone": "N/A",
+                                "platform": "WhatsApp",
+                                "reason": "Missing Phone Number",
+                                "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                "retry_count": 0,
+                                "status": "FAILED"
+                            })
+                            campaign.save()
+                            continue
+
+                        if template:
+                            payload = {
+                                "messaging_product": "whatsapp",
+                                "to": phone,
+                                "type": "template",
+                                "template": {
+                                    "name": template.name,
+                                    "language": {"code": template.language}
+                                }
+                            }
+                        else:
+                            msg_text = getattr(campaign, 'message_body', None) or "Hello from UWOConnect!"
+                            cust_name = contact.name or "Customer"
+                            first_name = cust_name.split()[0] if cust_name else "Customer"
+                            msg_text = msg_text.replace("{{first_name}}", first_name)\
+                                               .replace("{{name}}", cust_name)\
+                                               .replace("{{phone}}", phone)\
+                                               .replace("{{email}}", getattr(contact, 'email', '') or '')\
+                                               .replace("{{company}}", getattr(client, 'business_name', '') or 'UWOConnect')
+                            payload = {
+                                "messaging_product": "whatsapp",
+                                "to": phone,
+                                "type": "text",
+                                "text": {"preview_url": True, "body": msg_text}
+                            }
+
+                        if client.whatsapp_access_token and client.whatsapp_phone_number_id:
+                            res = MetaIntegration.send_whatsapp_message(client.whatsapp_phone_number_id, client.whatsapp_access_token, payload)
+                            if res.status_code in [200, 201]:
+                                campaign.total_sent += 1
+                                campaign.total_delivered += 1
+                            else:
+                                campaign.total_failed += 1
+                                reason = "Platform Error"
+                                try:
+                                    err_data = res.json()
+                                    reason = err_data.get("error", {}).get("message", f"HTTP {res.status_code}")
+                                except Exception:
+                                    pass
+                                campaign.failed_recipients.append({
+                                    "id": str(contact.id),
+                                    "name": name,
+                                    "phone": phone,
+                                    "platform": "WhatsApp",
+                                    "reason": reason,
+                                    "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                    "retry_count": 0,
+                                    "status": "FAILED"
+                                })
                         else:
                             campaign.total_failed += 1
-                            reason = "Platform Error"
-                            try:
-                                err_data = res.json()
-                                reason = err_data.get("error", {}).get("message", f"HTTP {res.status_code}")
-                            except Exception:
-                                pass
-
                             campaign.failed_recipients.append({
                                 "id": str(contact.id),
                                 "name": name,
                                 "phone": phone,
                                 "platform": "WhatsApp",
-                                "reason": reason,
+                                "reason": "WhatsApp Credentials Missing",
                                 "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                                 "retry_count": 0,
                                 "status": "FAILED"
                             })
-                    else:
-                        campaign.total_failed += 1
-                        campaign.failed_recipients.append({
-                            "id": str(contact.id),
-                            "name": name,
-                            "phone": phone,
-                            "platform": "WhatsApp",
-                            "reason": "WhatsApp Credentials Missing",
-                            "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                            "retry_count": 0,
-                            "status": "FAILED"
-                        })
+
+                    elif channel in ['FACEBOOK', 'INSTAGRAM']:
+                        recipient_id = contact.metadata.get('psid') if channel == 'FACEBOOK' else contact.metadata.get('igsid')
+                        if not recipient_id:
+                            campaign.total_failed += 1
+                            campaign.failed_recipients.append({
+                                "id": str(contact.id),
+                                "name": name,
+                                "phone": phone or "N/A",
+                                "platform": channel,
+                                "reason": "Missing recipient platform ID (PSID/IGSID)",
+                                "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                "retry_count": 0,
+                                "status": "FAILED"
+                            })
+                            campaign.save()
+                            continue
+
+                        fb_token_c = client.facebook_config.get('access_token') if channel == 'FACEBOOK' else client.instagram_config.get('access_token')
+                        page_id_c = client.facebook_config.get('page_id') if channel == 'FACEBOOK' else client.instagram_config.get('ig_id')
+                        payload = {
+                            "recipient": {"id": recipient_id},
+                            "message": {"text": getattr(campaign, 'body', '') or getattr(campaign, 'message_body', '')},
+                            "messaging_type": "MESSAGE_TAG",
+                            "tag": "POST_PURCHASE_UPDATE"
+                        }
+                        url = f"https://graph.facebook.com/v19.0/{page_id_c}/messages"
+                        res = requests.post(url, headers={"Authorization": f"Bearer {fb_token_c}"}, json=payload)
+                        if res.status_code == 200:
+                            campaign.total_sent += 1
+                            campaign.total_delivered += 1
+                        else:
+                            campaign.total_failed += 1
+                            campaign.failed_recipients.append({
+                                "id": str(contact.id),
+                                "name": name,
+                                "phone": phone or "N/A",
+                                "platform": channel,
+                                "reason": f"HTTP {res.status_code}",
+                                "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                "retry_count": 0,
+                                "status": "FAILED"
+                            })
+
                 except Exception as e:
                     campaign.total_failed += 1
                     campaign.failed_recipients.append({
                         "id": str(contact.id),
                         "name": name,
-                        "phone": phone,
-                        "platform": "WhatsApp",
+                        "phone": phone or "N/A",
+                        "platform": channel,
                         "reason": str(e),
                         "time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         "retry_count": 0,
@@ -156,7 +214,7 @@ class CampaignService:
 
             failed_items = campaign.failed_recipients or []
             new_failed_items = []
-            
+
             for item in failed_items:
                 if contact_ids and item.get("id") not in contact_ids:
                     new_failed_items.append(item)
@@ -178,7 +236,7 @@ class CampaignService:
                 else:
                     cust_name = item.get("name") or "Customer"
                     first_name = cust_name.split()[0] if cust_name else "Customer"
-                    msg_text = (campaign.message_body or "Hello!").replace("{{first_name}}", first_name)\
+                    msg_text = (getattr(campaign, 'message_body', None) or "Hello!").replace("{{first_name}}", first_name)\
                                                                 .replace("{{name}}", cust_name)\
                                                                 .replace("{{phone}}", phone)\
                                                                 .replace("{{company}}", getattr(client, 'business_name', '') or 'UWOConnect')
