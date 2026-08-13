@@ -37,10 +37,4 @@ USER appuser
 EXPOSE 8080
 
 # Entrypoint script for database migration & static files + server launch
-CMD exec gunicorn core.asgi:application \
-    -k uvicorn.workers.UvicornWorker \
-    --bind 0.0.0.0:${PORT:-8080} \
-    --workers 1 \
-    --timeout 120 \
-    --access-logfile - \
-    --error-logfile -
+CMD exec daphne -b 0.0.0.0 -p ${PORT:-8080} core.asgi:application
