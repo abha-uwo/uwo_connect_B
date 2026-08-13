@@ -156,6 +156,15 @@ class TeamChatConsumer(AsyncWebsocketConsumer):
 import logging
 logger = logging.getLogger(__name__)
 
+import re
+
+def sanitize_group_name(name):
+    # Channels allows ASCII alphanumerics, hyphens, or periods.
+    # We replace any other character (like '@') with an underscore.
+    if not name:
+        return name
+    return re.sub(r'[^a-zA-Z0-9\-\.]', '_', name)
+
 class WebRTCConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
@@ -192,7 +201,7 @@ class WebRTCConsumer(AsyncWebsocketConsumer):
             if not ident:
                 ident = str(user_id)
                 
-            self.personal_group = f'webrtc_user_{ident}'
+            self.personal_group = f'webrtc_user_{sanitize_group_name(ident)}'
             
             if self.channel_layer is None:
                 logger.error("[WebRTC] CHANNEL_LAYER IS NONE! Check settings.py")
@@ -237,7 +246,7 @@ class WebRTCConsumer(AsyncWebsocketConsumer):
             target_group = None
             if msg_type in ['offer', 'answer', 'ice_candidate', 'call_ended']:
                 recipient = data.get('recipient', '').lower()
-                target_group = f'webrtc_user_{recipient}'
+                target_group = f'webrtc_user_{sanitize_group_name(recipient)}'
             
             if target_group:
                 await self.channel_layer.group_send(
