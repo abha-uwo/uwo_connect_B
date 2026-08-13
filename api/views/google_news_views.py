@@ -61,12 +61,29 @@ def parse_google_news_xml(xml_content):
     return articles
 
 
+def get_tenant_client(request):
+    if not request.user or not request.user.is_authenticated:
+        return None
+    client = getattr(request.user, 'client_workspace', None) or getattr(request.user, 'client', None)
+    if not client and getattr(request.user, 'role', '') == 'ADMIN':
+        client_id = request.query_params.get('client_id') or request.data.get('client_id')
+        if client_id:
+            try:
+                from ..models import Client
+                return Client.objects.get(id=client_id)
+            except Exception:
+                pass
+        from ..models import Client
+        return Client.objects.first()
+    return client
+
+
 class GoogleNewsSettingsView(APIView):
     """Get or update Google News integration settings for the authenticated client."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        client = request.user.client
+        client = get_tenant_client(request)
         if not client:
             return Response({"error": "No associated client found"}, status=400)
 
@@ -81,7 +98,7 @@ class GoogleNewsSettingsView(APIView):
         })
 
     def post(self, request):
-        client = request.user.client
+        client = get_tenant_client(request)
         if not client:
             return Response({"error": "No associated client found"}, status=400)
 
@@ -114,7 +131,7 @@ class GoogleNewsFeedView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        client = request.user.client
+        client = get_tenant_client(request)
         if not client or not client.google_news_enabled:
             pass
 
@@ -159,7 +176,7 @@ class GoogleNewsAISummarizeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        client = request.user.client
+        client = get_tenant_client(request)
         if not client:
             return Response({"error": "No associated client found"}, status=400)
 
@@ -208,7 +225,7 @@ class GoogleNewsSendAlertView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        client = request.user.client
+        client = get_tenant_client(request)
         if not client:
             return Response({"error": "No associated client found"}, status=400)
 
@@ -229,11 +246,11 @@ class GoogleNewsSendAlertView(APIView):
             message_body = custom_text
         else:
             message_body = (
-                f"\U0001f4f0 *BREAKING NEWS ALERT*\n\n"
+                f"📰 *BREAKING NEWS ALERT*\n\n"
                 f"*{title}*\n\n"
                 f"{snippet}\n\n"
-                f"\U0001f4cc *Source:* {source}\n"
-                f"\U0001f517 *Read Full Story:* {link}"
+                f"📌 *Source:* {source}\n"
+                f"🔗 *Read Full Story:* {link}"
             )
 
         whatsapp_count = 0
@@ -244,31 +261,28 @@ class GoogleNewsSendAlertView(APIView):
 
         # ── 1. WhatsApp Broadcast ────────────────────────────────────
         if "WHATSAPP" in send_channels:
-            phone_number_id = client.whatsapp_phone_number_id
-            if phone_number_id and client.whatsapp_access_token:
-                contacts = Contact.objects.filter(client=client).exclude(phone_number__isnull=True).exclude(phone_number="")
-                for contact in contacts:
-                    try:
-                        to_number = ''.join(c for c in contact.phone_number if c.isdigit() or c == '+')
+            phone_number_id = client.whatsapp_phone_number_id or '100000000000000'
+            contacts = Contact.objects.filter(client=client).exclude(phone_number__isnull=True).exclude(phone_number="")
+            
+            phone_list = [c.phone_number for c in contacts if c.phone_number]
+            if not phone_list:
+                # Fallback to recent message recipients
+                recent_phones = Message.objects.filter(client=client).values_list('to_address', flat=True).distinct()
+                phone_list = [p for p in recent_phones if p and any(ch.isdigit() for ch in str(p))]
+
+            for raw_phone in phone_list:
+                try:
+                    to_number = ''.join(c for c in str(raw_phone) if c.isdigit() or c == '+')
+                    if to_number:
                         MetaWebhookService.send_whatsapp_message(
                             client=client,
                             to_number=to_number,
                             text_body=message_body,
                             phone_number_id=phone_number_id
                         )
-                        Message.objects.create(
-                            client=client,
-                            channel="WHATSAPP",
-                            from_address=phone_number_id,
-                            to_address=to_number,
-                            body=message_body,
-                            message_type="OUTGOING",
-                            sender_user=request.user,
-                            status="SENT"
-                        )
                         whatsapp_count += 1
-                    except Exception as e:
-                        logger.warning(f"Error sending news alert (WA) to {contact.phone_number}: {e}")
+                except Exception as e:
+                    logger.warning(f"Error sending news alert (WA) to {raw_phone}: {e}")
 
         # ── 2. Facebook Broadcast — Page Feed Post ──────────────────
         if "FACEBOOK" in send_channels and client.facebook_enabled:

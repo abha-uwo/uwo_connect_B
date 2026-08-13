@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.utils import timezone
 
 class Client(models.Model):
     PLAN_CHOICES = [
@@ -69,6 +70,15 @@ class Client(models.Model):
     white_label_domain = models.CharField(max_length=100, null=True, blank=True)
     white_label_logo = models.CharField(max_length=255, null=True, blank=True)
     
+    # Invoice & Branding Settings
+    invoice_prefix = models.CharField(max_length=20, default='INV')
+    invoice_next_number = models.IntegerField(default=1001)
+    company_logo_url = models.CharField(max_length=500, null=True, blank=True)
+    tax_id_gstin = models.CharField(max_length=100, null=True, blank=True)
+    invoice_default_notes = models.TextField(null=True, blank=True)
+    payment_terms = models.TextField(null=True, blank=True)
+    invoice_footer = models.TextField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1094,8 +1104,411 @@ class CallHistory(models.Model):
         return f"{self.caller_name} -> {self.receiver_name} ({self.call_type})"
 
 
+class ActiveCallSession(models.Model):
+    """
+    Persists live WebRTC call sessions in MongoDB so that Cloud Run stateless
+    instances can share call state across requests.
+    """
+    STATUS_CHOICES = [
+        ('RINGING', 'Ringing'),
+        ('CONNECTED', 'Connected'),
+        ('REJECTED', 'Rejected'),
+        ('COMPLETED', 'Completed'),
+        ('MISSED', 'Missed'),
+    ]
+
+    session_id = models.CharField(max_length=200, unique=True)
+    caller = models.CharField(max_length=255)
+    caller_user_id = models.CharField(max_length=100, null=True, blank=True)
+    client_id = models.CharField(max_length=100, null=True, blank=True)
+    recipient = models.CharField(max_length=255)
+    recipient_display = models.CharField(max_length=255, null=True, blank=True)
+    receiver_user_id = models.CharField(max_length=100, null=True, blank=True)
+    call_type = models.CharField(max_length=10, default='VOICE')
+    is_video = models.BooleanField(default=False)
+    sdp_offer = models.TextField(null=True, blank=True)
+    sdp_answer = models.TextField(null=True, blank=True)
+    ice_candidates = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='RINGING')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.caller} -> {self.recipient} [{self.status}]"
+
+    def to_dict(self):
+        return {
+            "session_id": self.session_id,
+            "caller": self.caller,
+            "caller_user_id": self.caller_user_id,
+            "client_id": self.client_id,
+            "recipient": self.recipient,
+            "recipient_display": self.recipient_display,
+            "receiver_user_id": self.receiver_user_id,
+            "call_type": self.call_type,
+            "is_video": self.is_video,
+            "sdp_offer": self.sdp_offer,
+            "sdp_answer": self.sdp_answer,
+            "ice_candidates": self.ice_candidates or [],
+            "status": self.status,
+        }
 
 
 
 
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-Client Razorpay OAuth Gateway Models
+# Each UWOConnect client connects their OWN Razorpay account via OAuth.
+# Payments for their products use their own Razorpay account — never mixed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RazorpayConnection(models.Model):
+    """
+    Stores the Razorpay OAuth connection for a specific client/workspace.
+    Every client connects their own Razorpay account — strict workspace isolation.
+    Tokens are NEVER exposed to the frontend.
+    """
+    MODE_CHOICES = [
+        ('TEST', 'Test Mode'),
+        ('LIVE', 'Live Mode'),
+    ]
+    STATUS_CHOICES = [
+        ('CONNECTED', 'Connected'),
+        ('DISCONNECTED', 'Disconnected'),
+        ('ERROR', 'Error / Revoked'),
+    ]
+
+    client = models.OneToOneField(
+        Client, on_delete=models.CASCADE, related_name='razorpay_connection'
+    )
+    # Razorpay account reference (from OAuth response)
+    razorpay_account_id = models.CharField(max_length=200, null=True, blank=True)
+
+    # OAuth tokens — stored backend-only, NEVER returned to frontend
+    access_token = models.TextField(null=True, blank=True)
+    refresh_token = models.TextField(null=True, blank=True)
+    # Razorpay OAuth returns key_id/key_secret pairs for the linked account
+    linked_key_id = models.CharField(max_length=200, null=True, blank=True)
+    linked_key_secret = models.TextField(null=True, blank=True)  # encrypted/backend-only
+
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, default='TEST')
+    connection_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DISCONNECTED')
+
+    # Webhook secret registered per workspace for event verification
+    webhook_secret = models.CharField(max_length=255, null=True, blank=True)
+
+    # Token expiry for refresh logic
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    connected_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.client.business_name} — Razorpay [{self.connection_status}] ({self.mode})"
+
+    def is_connected(self):
+        return self.connection_status == 'CONNECTED' and bool(self.linked_key_id)
+
+
+class ProductPayment(models.Model):
+    """
+    Records every customer transaction for a client's product.
+    Uses the client's own Razorpay account — strictly isolated per workspace.
+    """
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('PAID', 'Paid'),
+        ('FAILED', 'Failed'),
+        ('REFUNDED', 'Refunded'),
+        ('PARTIALLY_REFUNDED', 'Partially Refunded'),
+    ]
+
+    # Workspace isolation — CRITICAL
+    workspace = models.ForeignKey(
+        Client, on_delete=models.CASCADE, related_name='product_payments'
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.SET_NULL, null=True, blank=True, related_name='payments'
+    )
+    razorpay_connection = models.ForeignKey(
+        RazorpayConnection, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='product_payments'
+    )
+
+    # Razorpay IDs
+    razorpay_order_id = models.CharField(max_length=200, null=True, blank=True, db_index=True)
+    razorpay_payment_id = models.CharField(max_length=200, null=True, blank=True, db_index=True)
+    razorpay_signature = models.CharField(max_length=500, null=True, blank=True)
+
+    # Payment details
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=10, default='INR')
+    payment_status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='PENDING')
+    payment_method = models.CharField(max_length=100, null=True, blank=True)  # UPI, Card, NetBanking, etc.
+
+    # Customer info (collected at checkout)
+    customer_name = models.CharField(max_length=255, null=True, blank=True)
+    customer_email = models.EmailField(null=True, blank=True)
+    customer_phone = models.CharField(max_length=50, null=True, blank=True)
+
+    # Refund tracking
+    refund_id = models.CharField(max_length=200, null=True, blank=True)
+    refunded_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    refunded_at = models.DateTimeField(null=True, blank=True)
+
+    # Reference to the Razorpay account that processed the payment
+    gateway_account_reference = models.CharField(max_length=200, null=True, blank=True)
+
+    # Idempotency — prevents duplicate webhook processing
+    webhook_event_id = models.CharField(max_length=255, null=True, blank=True, unique=True)
+
+    paid_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return (
+            f"ProductPayment #{self.id} | {self.workspace.business_name} | "
+            f"{self.product.name if self.product else 'N/A'} | "
+            f"₹{self.amount} | {self.payment_status}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quotation, Proposal & Invoice (Sales Document) Management Module Models
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SalesDocumentTemplate(models.Model):
+    DOCUMENT_TYPE_CHOICES = [
+        ('QUOTATION', 'Quotation'),
+        ('PROPOSAL', 'Proposal'),
+    ]
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='sales_document_templates')
+    name = models.CharField(max_length=255)
+    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPE_CHOICES, default='PROPOSAL')
+    description = models.TextField(blank=True, default='')
+    cover_design = models.JSONField(default=dict, blank=True)
+    sections = models.JSONField(default=list, blank=True)
+    terms = models.TextField(blank=True, default='')
+    branding = models.JSONField(default=dict, blank=True)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.document_type})"
+
+
+class SalesDocument(models.Model):
+    DOCUMENT_TYPE_CHOICES = [
+        ('QUOTATION', 'Quotation'),
+        ('PROPOSAL', 'Proposal'),
+        ('INVOICE', 'Invoice'),
+    ]
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('SENT', 'Sent'),
+        ('VIEWED', 'Viewed'),
+        ('ACCEPTED', 'Accepted'),
+        ('REJECTED', 'Rejected'),
+        ('EXPIRED', 'Expired'),
+        ('CONVERTED', 'Converted'),
+        ('CANCELLED', 'Cancelled'),
+        ('PAID', 'Paid'),
+        ('FAILED', 'Failed'),
+    ]
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='sales_documents')
+    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPE_CHOICES, default='QUOTATION')
+    document_number = models.CharField(max_length=100, db_index=True)
+    
+    # Customer Details
+    customer = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_documents')
+    customer_name = models.CharField(max_length=255, null=True, blank=True)
+    customer_company = models.CharField(max_length=255, null=True, blank=True)
+    customer_email = models.EmailField(null=True, blank=True)
+    customer_phone = models.CharField(max_length=50, null=True, blank=True)
+    billing_address = models.TextField(null=True, blank=True)
+    shipping_address = models.TextField(null=True, blank=True)
+    tax_number = models.CharField(max_length=100, null=True, blank=True)
+    
+    # Admin Metadata
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_documents')
+    salesperson = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='salesperson_documents')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
+    
+    # Financial Details
+    currency = models.CharField(max_length=10, default='USD')
+    currency_symbol = models.CharField(max_length=10, default='$')
+    exchange_rate = models.DecimalField(max_digits=12, decimal_places=6, default=1.000000)
+    
+    document_date = models.DateField()
+    valid_until = models.DateField(null=True, blank=True)
+    payment_terms = models.CharField(max_length=255, null=True, blank=True)
+    reference_number = models.CharField(max_length=100, null=True, blank=True)
+    
+    # Price Summaries
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    discount_type = models.CharField(max_length=20, choices=[('PERCENTAGE', 'Percentage'), ('FIXED', 'Fixed Amount')], default='FIXED')
+    discount_value = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    additional_charges = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    
+    # Notes & Content
+    customer_notes = models.TextField(blank=True, default='')
+    internal_notes = models.TextField(blank=True, default='') # NEVER shown to customer
+    terms_conditions = models.TextField(blank=True, default='')
+    
+    # Portal Access
+    secure_token = models.CharField(max_length=64, unique=True, db_index=True)
+    version = models.IntegerField(default=1)
+    
+    # Traceability links
+    source_document = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='converted_documents')
+    
+    # Company Branding Snapshot
+    company_details = models.JSONField(default=dict, blank=True)
+    
+    # Rich Content (Proposal sections, FAQs)
+    proposal_sections = models.JSONField(default=list, blank=True)
+    proposal_template = models.ForeignKey(SalesDocumentTemplate, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Digital acceptance info
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    accepted_by_name = models.CharField(max_length=255, null=True, blank=True)
+    accepted_by_email = models.EmailField(null=True, blank=True)
+    accepted_comment = models.TextField(null=True, blank=True)
+    accepted_ip = models.GenericIPAddressField(null=True, blank=True)
+    accepted_user_agent = models.TextField(null=True, blank=True)
+    
+    # Digital rejection info
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.CharField(max_length=255, null=True, blank=True)
+    rejection_comment = models.TextField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = ('client', 'document_number', 'version')
+
+    def __str__(self):
+        return f"{self.document_type} {self.document_number} v{self.version} ({self.status})"
+
+
+class SalesDocumentItem(models.Model):
+    document = models.ForeignKey(SalesDocument, on_delete=models.CASCADE, related_name='items')
+    product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True)
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default='')
+    sku = models.CharField(max_length=100, null=True, blank=True)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2, default=1.00)
+    unit = models.CharField(max_length=50, default='pcs')
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    
+    # Discount & Tax per item
+    discount_type = models.CharField(max_length=20, choices=[('PERCENTAGE', 'Percentage'), ('FIXED', 'Fixed Amount')], default='FIXED')
+    discount_value = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00) # e.g. 18.00 for 18%
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    
+    line_total = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order', 'id']
+
+    def __str__(self):
+        return f"{self.name} x {self.quantity}"
+
+
+class SalesDocumentActivity(models.Model):
+    document = models.ForeignKey(SalesDocument, on_delete=models.CASCADE, related_name='activities')
+    activity_type = models.CharField(max_length=50) # CREATED, EDITED, SENT, VIEWED, DOWNLOADED, ACCEPTED, REJECTED, CONVERTED, REMINDER_SENT, CANCELLED
+    details = models.TextField(blank=True, default='')
+    performed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    performed_by_name = models.CharField(max_length=255, default='System')
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.activity_type} on {self.document.document_number} at {self.created_at}"
+
+
+class Invoice(models.Model):
+    PAYMENT_STATUS_CHOICES = [
+        ('PAID', 'Paid'),
+        ('PENDING', 'Pending'),
+        ('FAILED', 'Failed'),
+        ('REFUNDED', 'Refunded'),
+    ]
+    INVOICE_STATUS_CHOICES = [
+        ('GENERATED', 'Generated'),
+        ('PENDING', 'Pending'),
+        ('FAILED', 'Failed'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='invoices')
+    invoice_number = models.CharField(max_length=100, db_index=True)
+    order = models.ForeignKey(Order, on_delete=models.SET_NULL, null=True, blank=True, related_name='invoices')
+    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, related_name='invoices')
+    payment_record = models.ForeignKey(ProductPayment, on_delete=models.SET_NULL, null=True, blank=True, related_name='invoices')
+    
+    payment_id = models.CharField(max_length=255, db_index=True, null=True, blank=True)
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)
+    order_reference = models.CharField(max_length=255, db_index=True, null=True, blank=True)
+    channel = models.CharField(max_length=50, default='WEBSITE')
+    secure_token = models.CharField(max_length=64, db_index=True, null=True, blank=True)
+    
+    currency = models.CharField(max_length=10, default='USD')
+    currency_symbol = models.CharField(max_length=10, default='$')
+    
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    discount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    shipping = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    tax = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    
+    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='PAID')
+    invoice_status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='GENERATED')
+    payment_method = models.CharField(max_length=50, default='Razorpay')
+    
+    invoice_date = models.DateTimeField(default=timezone.now)
+    payment_date = models.DateTimeField(null=True, blank=True)
+    
+    seller_details = models.JSONField(default=dict, blank=True)
+    billing_details = models.JSONField(default=dict, blank=True)
+    shipping_details = models.JSONField(default=dict, blank=True)
+    line_items = models.JSONField(default=list, blank=True)
+    
+    pdf_file_path = models.CharField(max_length=500, null=True, blank=True)
+    error_log = models.TextField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.invoice_number} ({self.currency} {self.total})"
 

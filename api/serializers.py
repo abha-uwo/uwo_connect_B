@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Client, Automation, Workflow, GlobalSetting, Contact, Template, Campaign, SupportMessage, AuditLog, TeamInvite, KnowledgeDocument, TeamMessage, Product, Order, Project, Task, TaskComment, WorkReport, WorkApproval, TeamChannel, TeamChatMessage, Attendance, LeaveRequest, Message, Conversation, ConversationAuditLog, Guide, GuideSection, GuideStep, GuideProgress, EmailAccount, EmailMessage, EmailAutoReplyRule, EmailAutomationWorkflow, EmailTeamNote
+from .models import User, Client, Automation, Workflow, GlobalSetting, Contact, Template, Campaign, SupportMessage, AuditLog, TeamInvite, KnowledgeDocument, TeamMessage, Product, Order, ProductPayment, Project, Task, TaskComment, WorkReport, WorkApproval, TeamChannel, TeamChatMessage, Attendance, LeaveRequest, Message, Conversation, ConversationAuditLog, Guide, GuideSection, GuideStep, GuideProgress, EmailAccount, EmailMessage, EmailAutoReplyRule, EmailAutomationWorkflow, EmailTeamNote, SalesDocumentTemplate, SalesDocument, SalesDocumentItem, SalesDocumentActivity, Invoice
 from .repositories.contact_repository import ContactRepository
 from .repositories.workflow_repository import WorkflowRepository
 from .repositories.automation_repository import AutomationRepository
@@ -573,6 +573,100 @@ class EmailAutomationWorkflowSerializer(serializers.ModelSerializer):
         model = EmailAutomationWorkflow
         fields = '__all__'
         read_only_fields = ('client', 'created_at')
+
+
+class SalesDocumentTemplateSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    client = ObjectIdField(read_only=True)
+
+    class Meta:
+        model = SalesDocumentTemplate
+        fields = '__all__'
+        read_only_fields = ('client', 'created_at', 'updated_at')
+
+
+class SalesDocumentItemSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+
+    class Meta:
+        model = SalesDocumentItem
+        fields = '__all__'
+
+
+class SalesDocumentActivitySerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+
+    class Meta:
+        model = SalesDocumentActivity
+        fields = '__all__'
+        read_only_fields = ('created_at',)
+
+
+class SalesDocumentSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    client = ObjectIdField(read_only=True)
+    items = SalesDocumentItemSerializer(many=True, read_only=True)
+    activities = SalesDocumentActivitySerializer(many=True, read_only=True)
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True)
+    salesperson_name = serializers.CharField(source='salesperson.username', read_only=True)
+    customer_details = serializers.SerializerMethodField(read_only=True)
+    client_details = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = SalesDocument
+        fields = '__all__'
+        read_only_fields = ('client', 'created_by', 'document_number', 'secure_token', 'version', 'created_at', 'updated_at')
+
+    def get_customer_details(self, obj):
+        if obj.customer:
+            return {
+                'id': str(obj.customer.id),
+                'name': obj.customer.name,
+                'email': obj.customer.email,
+                'phone_number': obj.customer.phone_number,
+            }
+        return None
+
+    def get_client_details(self, obj):
+        if obj.company_details and isinstance(obj.company_details, dict) and obj.company_details.get('business_name'):
+            return obj.company_details
+        
+        client = obj.client
+        if client:
+            return {
+                'business_name': client.business_name,
+                'company_logo_url': getattr(client, 'company_logo_url', '') or '',
+                'phone_number': getattr(client, 'phone_number', '') or '',
+                'email': (client.users.first().email if client.users.exists() else '') if hasattr(client, 'users') else '',
+                'address': getattr(client, 'address', '') or '',
+                'tax_id_gstin': getattr(client, 'tax_id_gstin', '') or '',
+                'invoice_prefix': getattr(client, 'invoice_prefix', 'INV') or 'INV',
+                'website': getattr(client, 'website', '') or '',
+            }
+        return {}
+
+
+class InvoiceSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    client = ObjectIdField(read_only=True)
+    order = serializers.PrimaryKeyRelatedField(queryset=Order.objects.all(), required=False, allow_null=True)
+    contact = serializers.PrimaryKeyRelatedField(queryset=Contact.objects.all(), required=False, allow_null=True)
+    payment_record = serializers.PrimaryKeyRelatedField(queryset=ProductPayment.objects.all(), required=False, allow_null=True)
+    invoice_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    class Meta:
+        model = Invoice
+        fields = '__all__'
+        read_only_fields = ('client', 'created_at', 'updated_at')
+
+
+class InvoiceSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Client
+        fields = [
+            'invoice_prefix', 'invoice_next_number', 'company_logo_url',
+            'tax_id_gstin', 'invoice_default_notes', 'payment_terms', 'invoice_footer'
+        ]
 
 
 

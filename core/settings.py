@@ -95,7 +95,7 @@ AUTH_USER_MODEL = 'api.User'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'api.services.jwt_auth.JWTQueryParamAuthentication',
         'api.services.firebase_auth.FirebaseAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
@@ -183,6 +183,8 @@ DATABASES = {
         'ENGINE': 'django_mongodb_backend',
         'NAME': os.getenv('MONGODB_DB_NAME', 'aisaconnect_db_v5'),
         'HOST': os.getenv('MONGODB_URI', DEFAULT_MONGO_URI),
+        'CONN_MAX_AGE': 600,
+        'CONN_HEALTH_CHECKS': True,
     }
 }
 
