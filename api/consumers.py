@@ -153,16 +153,19 @@ class TeamChatConsumer(AsyncWebsocketConsumer):
             'message': message
         }))
 
+import logging
+logger = logging.getLogger(__name__)
+
 class WebRTCConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
-            print("[WebRTC] Connection attempt started")
+            logger.error(f"[WebRTC] Connection attempt started for scope: {self.scope.get('query_string', b'').decode()}")
             query_string = self.scope.get('query_string', b'').decode()
             query_params = parse_qs(query_string)
             token = query_params.get('token', [None])[0]
 
             if not token or token == 'null' or token == 'undefined':
-                print("[WebRTC] No valid token provided")
+                logger.error("[WebRTC] No valid token provided")
                 await self.close()
                 return
 
@@ -170,13 +173,13 @@ class WebRTCConsumer(AsyncWebsocketConsumer):
                 decoded_data = jwt.decode(token, settings.SIMPLE_JWT['SIGNING_KEY'], algorithms=[settings.SIMPLE_JWT['ALGORITHM']])
                 user_id = decoded_data.get(settings.SIMPLE_JWT['USER_ID_CLAIM'])
             except Exception as e:
-                print(f"[WebRTC] JWT Decode Error: {e}")
+                logger.error(f"[WebRTC] JWT Decode Error: {e}")
                 await self.close()
                 return
                 
             user = await self.get_user(user_id)
             if not user:
-                print(f"[WebRTC] User {user_id} not found")
+                logger.error(f"[WebRTC] User {user_id} not found")
                 await self.close()
                 return
                 
@@ -192,7 +195,7 @@ class WebRTCConsumer(AsyncWebsocketConsumer):
             self.personal_group = f'webrtc_user_{ident}'
             
             if self.channel_layer is None:
-                print("[WebRTC] CHANNEL_LAYER IS NONE! Check settings.py")
+                logger.error("[WebRTC] CHANNEL_LAYER IS NONE! Check settings.py")
                 await self.close()
                 return
                 
@@ -205,12 +208,12 @@ class WebRTCConsumer(AsyncWebsocketConsumer):
                 await self.channel_layer.group_add(self.workspace_group, self.channel_name)
 
             await self.accept()
-            print(f"[WebRTC] Successfully connected {ident}")
+            logger.error(f"[WebRTC] Successfully connected {ident}")
 
         except Exception as e:
             import traceback
-            print(f"[WebRTC] Fatal Connect Error: {e}")
-            traceback.print_exc()
+            logger.error(f"[WebRTC] Fatal Connect Error: {e}")
+            logger.error(traceback.format_exc())
             await self.close()
 
     @sync_to_async
