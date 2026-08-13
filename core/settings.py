@@ -183,8 +183,6 @@ DATABASES = {
         'ENGINE': 'django_mongodb_backend',
         'NAME': os.getenv('MONGODB_DB_NAME', 'aisaconnect_db_v5'),
         'HOST': os.getenv('MONGODB_URI', DEFAULT_MONGO_URI),
-        'CONN_MAX_AGE': 600,
-        'CONN_HEALTH_CHECKS': True,
     }
 }
 
