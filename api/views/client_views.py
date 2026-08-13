@@ -383,8 +383,9 @@ class ClientMessagesView(APIView):
                 "channel": msg.channel,
                 "message_type": msg.message_type,
                 "status": msg.status,
-                "created_at": msg.created_at,
-                "metadata": msg.metadata or {}
+                "buttons": getattr(msg, 'buttons', []) or [],
+                "metadata": msg.metadata or {},
+                "created_at": msg.created_at
             })
         return Response(data)
 

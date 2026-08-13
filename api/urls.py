@@ -25,11 +25,22 @@ from .views import (
     OutlookConnectView, OutlookCallbackView, OutlookStatusView, OutlookSyncView, OutlookSendMailView, OutlookDisconnectView,
     OutlookCalendarEventsView, OutlookTeamsView, OutlookContactsView, OutlookExcelView,
     EmailAccountViewSet, EmailMessageViewSet, EmailAutoReplyViewSet, EmailAutomationWorkflowViewSet, EmailAnalyticsView, EmailComposeView,
-    WebRTCIceConfigView, WebRTCHistoryView,
-
-    CallScheduleView, CallAISummaryView, CallAnalyticsView, HealthCheckView
+    WebRTCIceConfigView, WebRTCInitiateCallView, WebRTCCallSignalView, WebRTCHistoryView,
+    WebRTCActiveCallCheckView, WebRTCCallActionView,
+    CallScheduleView, CallAISummaryView, CallAnalyticsView, HealthCheckView,
+    RazorpayOAuthInitiateView, RazorpayOAuthCallbackView, RazorpayConnectionStatusView,
+    RazorpayModeSwitchView, PublicProductCheckoutInfoView, ProductCheckoutCreateOrderView,
+    ProductCheckoutVerifyView, ProductCheckoutWebhookView, ClientProductSalesView,
+    ClientSalesDashboardView, ClientRefundView,
 )
 from api.views.zoho_views import ZohoConnectView, ZohoCallbackView, ZohoDisconnectView, ZohoTestLeadView
+
+from .views.sales_document_views import (
+    SalesDocumentViewSet, SalesDocumentTemplateViewSet, SalesAnalyticsView,
+    PublicSalesDocumentView, PublicSalesDocumentAcceptView,
+    PublicSalesDocumentRejectView, PublicSalesDocumentPDFView
+)
+from .views.invoice_views import InvoiceViewSet, PublicInvoiceView, PublicInvoicePDFView
 
 router = DefaultRouter()
 router.register(r'clients', ClientViewSet, basename='client')
@@ -53,6 +64,11 @@ router.register(r'email/accounts', EmailAccountViewSet, basename='email-account'
 router.register(r'email/messages', EmailMessageViewSet, basename='email-message')
 router.register(r'email/auto-replies', EmailAutoReplyViewSet, basename='email-auto-reply')
 router.register(r'email/automations', EmailAutomationWorkflowViewSet, basename='email-automation')
+router.register(r'sales-documents', SalesDocumentViewSet, basename='sales-document')
+router.register(r'sales-document-templates', SalesDocumentTemplateViewSet, basename='sales-document-template')
+router.register(r'invoices', InvoiceViewSet, basename='invoice')
+router.register(r'quotations', SalesDocumentViewSet, basename='quotation')
+router.register(r'proposals', SalesDocumentViewSet, basename='proposal')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -259,4 +275,71 @@ urlpatterns = [
     path('calls/ai-summary/', CallAISummaryView.as_view()),
     path('calls/analytics', CallAnalyticsView.as_view(), name='calls-analytics'),
     path('calls/analytics/', CallAnalyticsView.as_view()),
+
+    # ── Per-Client Razorpay Gateway (OAuth / Technology Partner) ──────────────
+    # Client OAuth connection
+    path('razorpay/connect', RazorpayOAuthInitiateView.as_view(), name='razorpay-connect'),
+    path('razorpay/connect/', RazorpayOAuthInitiateView.as_view()),
+    path('razorpay/callback', RazorpayOAuthCallbackView.as_view(), name='razorpay-callback'),
+    path('razorpay/callback/', RazorpayOAuthCallbackView.as_view()),
+    # Connection management
+    path('razorpay/status', RazorpayConnectionStatusView.as_view(), name='razorpay-status'),
+    path('razorpay/status/', RazorpayConnectionStatusView.as_view()),
+    path('razorpay/mode', RazorpayModeSwitchView.as_view(), name='razorpay-mode'),
+    path('razorpay/mode/', RazorpayModeSwitchView.as_view()),
+    # Product checkout (public — no auth needed for customer)
+    path('razorpay/checkout/create-order', ProductCheckoutCreateOrderView.as_view(), name='razorpay-checkout-create'),
+    path('razorpay/checkout/create-order/', ProductCheckoutCreateOrderView.as_view()),
+    path('razorpay/checkout/verify', ProductCheckoutVerifyView.as_view(), name='razorpay-checkout-verify'),
+    path('razorpay/checkout/verify/', ProductCheckoutVerifyView.as_view()),
+    # Webhook (all workspaces, idempotent)
+    path('razorpay/product-webhook', ProductCheckoutWebhookView.as_view(), name='razorpay-product-webhook'),
+    path('razorpay/product-webhook/', ProductCheckoutWebhookView.as_view()),
+    # Sales & analytics (authenticated client)
+    path('razorpay/sales', ClientProductSalesView.as_view(), name='razorpay-sales'),
+    path('razorpay/sales/', ClientProductSalesView.as_view()),
+    path('razorpay/sales/dashboard', ClientSalesDashboardView.as_view(), name='razorpay-sales-dashboard'),
+    path('razorpay/sales/dashboard/', ClientSalesDashboardView.as_view()),
+    # Refunds
+    path('razorpay/refund', ClientRefundView.as_view(), name='razorpay-refund'),
+    path('razorpay/refund/', ClientRefundView.as_view()),
+    # Public product checkout info (no auth — for customer-facing checkout page)
+    path('public/checkout/<str:product_id>', PublicProductCheckoutInfoView.as_view(), name='public-checkout-info'),
+    path('public/checkout/<str:product_id>/', PublicProductCheckoutInfoView.as_view()),
+    
+    # ── Sales Document Module (Quotations, Proposals, Invoices) ──
+    path('sales/analytics', SalesAnalyticsView.as_view(), name='sales-analytics'),
+    path('sales/analytics/', SalesAnalyticsView.as_view()),
+    path('public/sales-documents/<str:token>', PublicSalesDocumentView.as_view(), name='public-sales-document-detail'),
+    path('public/sales-documents/<str:token>/', PublicSalesDocumentView.as_view()),
+    path('public/sales-documents/<str:token>/accept', PublicSalesDocumentAcceptView.as_view(), name='public-sales-document-accept'),
+    path('public/sales-documents/<str:token>/accept/', PublicSalesDocumentAcceptView.as_view()),
+    path('public/sales-documents/<str:token>/reject', PublicSalesDocumentRejectView.as_view(), name='public-sales-document-reject'),
+    path('public/sales-documents/<str:token>/reject/', PublicSalesDocumentRejectView.as_view()),
+    path('public/sales-documents/<str:token>/pdf', PublicSalesDocumentPDFView.as_view(), name='public-sales-document-pdf'),
+    path('public/sales-documents/<str:token>/pdf/', PublicSalesDocumentPDFView.as_view()),
+
+    path('public/quotation/<str:token>', PublicSalesDocumentView.as_view(), name='public-quotation-detail'),
+    path('public/quotation/<str:token>/', PublicSalesDocumentView.as_view()),
+    path('public/quotation/<str:token>/accept', PublicSalesDocumentAcceptView.as_view(), name='public-quotation-accept'),
+    path('public/quotation/<str:token>/accept/', PublicSalesDocumentAcceptView.as_view()),
+    path('public/quotation/<str:token>/reject', PublicSalesDocumentRejectView.as_view(), name='public-quotation-reject'),
+    path('public/quotation/<str:token>/reject/', PublicSalesDocumentRejectView.as_view()),
+
+    path('public/proposal/<str:token>', PublicSalesDocumentView.as_view(), name='public-proposal-detail'),
+    path('public/proposal/<str:token>/', PublicSalesDocumentView.as_view()),
+    path('public/proposal/<str:token>/accept', PublicSalesDocumentAcceptView.as_view(), name='public-proposal-accept'),
+    path('public/proposal/<str:token>/accept/', PublicSalesDocumentAcceptView.as_view()),
+    path('public/proposal/<str:token>/reject', PublicSalesDocumentRejectView.as_view(), name='public-proposal-reject'),
+    path('public/proposal/<str:token>/reject/', PublicSalesDocumentRejectView.as_view()),
+
+    # Public Invoice endpoints
+    path('public/invoices/<str:token>', PublicInvoiceView.as_view(), name='public-invoice-detail'),
+    path('public/invoices/<str:token>/', PublicInvoiceView.as_view()),
+    path('public/invoices/<str:token>/pdf', PublicInvoicePDFView.as_view(), name='public-invoice-pdf'),
+    path('public/invoices/<str:token>/pdf/', PublicInvoicePDFView.as_view()),
+    path('public/invoice/<str:token>', PublicInvoiceView.as_view()),
+    path('public/invoice/<str:token>/', PublicInvoiceView.as_view()),
+    path('public/invoice/<str:token>/pdf', PublicInvoicePDFView.as_view()),
+    path('public/invoice/<str:token>/pdf/', PublicInvoicePDFView.as_view()),
 ]

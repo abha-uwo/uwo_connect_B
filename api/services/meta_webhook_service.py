@@ -115,6 +115,8 @@ class MetaWebhookService:
                                     body = (msg.get('interactive') or {}).get('button_reply', {}).get('title', '')
                                 elif i_type == 'list_reply':
                                     body = (msg.get('interactive') or {}).get('list_reply', {}).get('title', '')
+                            elif msg_type == 'unsupported':
+                                body = "📎 [Unsupported WhatsApp Media / Format]"
                             elif not body:
                                 body = f"📎 [{msg_type.capitalize()}]"
                             
