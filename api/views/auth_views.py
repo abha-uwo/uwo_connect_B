@@ -135,7 +135,30 @@ class FirebaseLoginView(views.APIView):
         })
 
 
+@method_decorator(csrf_exempt, name='dispatch')
+class UWOLoginView(views.APIView):
+    permission_classes = []
+    authentication_classes = []
+
+    def post(self, req):
+        email = req.data.get('email', '').strip().lower()
+        name = req.data.get('name', '').strip()
+        uwo_token = req.data.get('uwo_token', '').strip()
+
+        from ..services.auth_service import AuthService
+        result = AuthService.process_uwo_login(email, name, uwo_token)
+
+        if "error" in result:
+            return Response({"message": result["error"]}, status=result.get("status_code", 400))
+
+        return Response({
+            "user": result["user"],
+            "token": result["token"]
+        }, status=status.HTTP_200_OK)
+
+
 class ProfileView(APIView):
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
