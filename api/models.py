@@ -226,11 +226,11 @@ class Message(models.Model):
         ('FAILED', 'Failed'),
     ]
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='messages')
-    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES)
+    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, db_index=True)
     from_address = models.CharField(max_length=255)
     to_address = models.CharField(max_length=255)
     body = models.TextField()
-    message_type = models.CharField(max_length=10, choices=TYPE_CHOICES)
+    message_type = models.CharField(max_length=10, choices=TYPE_CHOICES, db_index=True)
     sender_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_messages')
     sender_name = models.CharField(max_length=255, null=True, blank=True)
     sender_avatar = models.CharField(max_length=500, null=True, blank=True)
@@ -242,7 +242,7 @@ class Message(models.Model):
     edited_at = models.DateTimeField(null=True, blank=True)
     edited_history = models.JSONField(default=list, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
 class Conversation(models.Model):
     STATUS_CHOICES = [
@@ -261,8 +261,8 @@ class Conversation(models.Model):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='conversations')
     contact = models.ForeignKey('Contact', on_delete=models.CASCADE, related_name='conversations', null=True, blank=True)
     contact_platform_id = models.CharField(max_length=255)
-    channel = models.CharField(max_length=20, default='WHATSAPP')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='OPEN')
+    channel = models.CharField(max_length=20, default='WHATSAPP', db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='OPEN', db_index=True)
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='MEDIUM')
     assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_conversations')
     assigned_department = models.CharField(max_length=100, default='General', blank=True)
@@ -279,7 +279,7 @@ class Conversation(models.Model):
     first_response_time_seconds = models.IntegerField(default=0)
     resolution_time_seconds = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
 
     class Meta:
         ordering = ['-last_message_at']
@@ -1012,7 +1012,7 @@ class EmailMessage(models.Model):
 
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='email_messages')
     account = models.ForeignKey(EmailAccount, on_delete=models.SET_NULL, null=True, blank=True, related_name='messages')
-    folder = models.CharField(max_length=30, choices=FOLDER_CHOICES, default='inbox')
+    folder = models.CharField(max_length=30, choices=FOLDER_CHOICES, default='inbox', db_index=True)
     sender_email = models.EmailField(max_length=255)
     sender_name = models.CharField(max_length=255, blank=True, default='')
     to_recipients = models.JSONField(default=list, blank=True) # ['aditi@uwo24.com']
@@ -1023,7 +1023,7 @@ class EmailMessage(models.Model):
     body_html = models.TextField(blank=True, default='')
     attachments = models.JSONField(default=list, blank=True) # [{'name': 'document.pdf', 'size': '2.4 MB', 'url': '...'}]
     
-    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='delivered')
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='delivered', db_index=True)
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='normal')
     is_read = models.BooleanField(default=False)
     labels = models.JSONField(default=list, blank=True) # ['Sales', 'Support', 'Urgent']
@@ -1036,7 +1036,7 @@ class EmailMessage(models.Model):
     assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_emails')
     meeting_invite_data = models.JSONField(default=dict, blank=True) # {'title': '...', 'link': '...', 'status': 'accepted'}
     
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -1355,7 +1355,7 @@ class SalesDocument(models.Model):
         ('FAILED', 'Failed'),
     ]
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='sales_documents')
-    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPE_CHOICES, default='QUOTATION')
+    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPE_CHOICES, default='QUOTATION', db_index=True)
     document_number = models.CharField(max_length=100, db_index=True)
     
     # Customer Details
@@ -1371,7 +1371,7 @@ class SalesDocument(models.Model):
     # Admin Metadata
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_documents')
     salesperson = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='salesperson_documents')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT', db_index=True)
     
     # Financial Details
     currency = models.CharField(max_length=10, default='USD')
@@ -1424,7 +1424,7 @@ class SalesDocument(models.Model):
     rejection_reason = models.CharField(max_length=255, null=True, blank=True)
     rejection_comment = models.TextField(null=True, blank=True)
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -1515,11 +1515,11 @@ class Invoice(models.Model):
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     
-    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='PAID')
-    invoice_status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='GENERATED')
+    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='PAID', db_index=True)
+    invoice_status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='GENERATED', db_index=True)
     payment_method = models.CharField(max_length=50, default='Razorpay')
     
-    invoice_date = models.DateTimeField(default=timezone.now)
+    invoice_date = models.DateTimeField(default=timezone.now, db_index=True)
     payment_date = models.DateTimeField(null=True, blank=True)
     
     seller_details = models.JSONField(default=dict, blank=True)
@@ -1530,7 +1530,7 @@ class Invoice(models.Model):
     pdf_file_path = models.CharField(max_length=500, null=True, blank=True)
     error_log = models.TextField(null=True, blank=True)
     
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

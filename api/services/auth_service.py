@@ -1,7 +1,7 @@
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 from firebase_admin import auth as firebase_auth
-from ..models import User, Client, TeamInvite
+from ..models import User, Client, TeamInvite, AuditLog
 from django.utils import timezone
 from ..repositories.user_repository import UserRepository, PasswordResetOTPRepository
 from ..repositories.team_invite_repository import TeamInviteRepository
@@ -26,7 +26,7 @@ class AuthService:
             }
 
     @staticmethod
-    def login_user(email, password):
+    def login_user(email, password, ip_address=None):
         if not email or not password:
             return {"error": "Email and password are required.", "status_code": 400}
 
@@ -47,6 +47,20 @@ class AuthService:
         user.last_active_at = timezone.now()
         user.save(update_fields=['is_online', 'last_active_at'])
 
+        # Create AuditLog for LOGIN
+        try:
+            AuditLog.objects.create(
+                admin_name=user.username,
+                client_name=user.client.business_name if user.client else "Platform",
+                module="Authentication",
+                action="LOGIN",
+                before_value=f"Role: {user.role}",
+                after_value=f"User {user.username} logged in successfully.",
+                ip_address=ip_address
+            )
+        except Exception as e:
+            print(f"[AuditLog Error] {str(e)}")
+
         refresh = RefreshToken.for_user(user)
         return {
             "user": AuthService._serialize_user(user),
@@ -54,7 +68,7 @@ class AuthService:
         }
 
     @staticmethod
-    def process_firebase_login(id_token, name, invite_token, business_name):
+    def process_firebase_login(id_token, name, invite_token, business_name, ip_address=None):
         if not id_token:
             return {"error": "Firebase ID token is required", "status_code": 400}
 
@@ -87,6 +101,20 @@ class AuthService:
                 user.is_superuser = True
                 user.save()
             
+            # Create AuditLog for LOGIN
+            try:
+                AuditLog.objects.create(
+                    admin_name=user.username,
+                    client_name="Platform",
+                    module="Authentication",
+                    action="LOGIN",
+                    before_value="Role: ADMIN",
+                    after_value="System Admin logged in successfully via Firebase.",
+                    ip_address=ip_address
+                )
+            except Exception as e:
+                print(f"[AuditLog Error] {str(e)}")
+
             refresh = RefreshToken.for_user(user)
             return {
                 "user": AuthService._serialize_user(user, override_name="System Admin"),
@@ -101,6 +129,25 @@ class AuthService:
         if user:
             if user.role == 'CLIENT' and user.status != 'APPROVED':
                 return {"error": f"Account status: {user.status}. Please wait for admin approval.", "status_code": 403}
+
+            # Update last active
+            user.is_online = True
+            user.last_active_at = timezone.now()
+            user.save(update_fields=['is_online', 'last_active_at'])
+
+            # Create AuditLog for LOGIN
+            try:
+                AuditLog.objects.create(
+                    admin_name=user.username,
+                    client_name=user.client.business_name if user.client else "Platform",
+                    module="Authentication",
+                    action="LOGIN",
+                    before_value=f"Role: {user.role}",
+                    after_value=f"User {user.username} logged in successfully via Firebase.",
+                    ip_address=ip_address
+                )
+            except Exception as e:
+                print(f"[AuditLog Error] {str(e)}")
 
             return {
                 "user": AuthService._serialize_user(user),
@@ -132,6 +179,20 @@ class AuthService:
                 invite.is_used = True
                 invite.save()
                 
+                # Create AuditLog for REGISTER & LOGIN
+                try:
+                    AuditLog.objects.create(
+                        admin_name=user.username,
+                        client_name=user.client.business_name if user.client else "Platform",
+                        module="Authentication",
+                        action="REGISTER & LOGIN",
+                        before_value=f"Role: {user.role}",
+                        after_value=f"User {user.username} registered and logged in successfully via invite.",
+                        ip_address=ip_address
+                    )
+                except Exception as e:
+                    print(f"[AuditLog Error] {str(e)}")
+
                 refresh = RefreshToken.for_user(user)
                 return {
                     "is_created": True,
@@ -159,7 +220,7 @@ class AuthService:
                 }
 
     @staticmethod
-    def process_uwo_login(email, name, uwo_token=None):
+    def process_uwo_login(email, name, uwo_token=None, ip_address=None):
 
         email = (email or '').lower().strip()
         name = (name or '').strip() or (email.split('@')[0] if email else 'User')
@@ -181,6 +242,20 @@ class AuthService:
                 user.is_superuser = True
                 user.save()
 
+            # Create AuditLog for LOGIN
+            try:
+                AuditLog.objects.create(
+                    admin_name=user.username,
+                    client_name="Platform",
+                    module="Authentication",
+                    action="LOGIN",
+                    before_value="Role: ADMIN",
+                    after_value="System Admin logged in successfully via UWO.",
+                    ip_address=ip_address
+                )
+            except Exception as e:
+                print(f"[AuditLog Error] {str(e)}")
+
             refresh = RefreshToken.for_user(user)
             return {
                 "user": AuthService._serialize_user(user, override_name="System Admin"),
@@ -196,6 +271,20 @@ class AuthService:
             user.is_online = True
             user.last_active_at = timezone.now()
             user.save(update_fields=['is_online', 'last_active_at'])
+
+            # Create AuditLog for LOGIN
+            try:
+                AuditLog.objects.create(
+                    admin_name=user.username,
+                    client_name=user.client.business_name if user.client else "Platform",
+                    module="Authentication",
+                    action="LOGIN",
+                    before_value=f"Role: {user.role}",
+                    after_value=f"User {user.username} logged in successfully via UWO.",
+                    ip_address=ip_address
+                )
+            except Exception as e:
+                print(f"[AuditLog Error] {str(e)}")
 
             refresh = RefreshToken.for_user(user)
             return {
@@ -215,6 +304,21 @@ class AuthService:
                 status='APPROVED',
                 client=client
             )
+
+            # Create AuditLog for REGISTER & LOGIN
+            try:
+                AuditLog.objects.create(
+                    admin_name=user.username,
+                    client_name=user.client.business_name if user.client else "Platform",
+                    module="Authentication",
+                    action="REGISTER & LOGIN",
+                    before_value=f"Role: {user.role}",
+                    after_value=f"User {user.username} registered and logged in successfully via UWO.",
+                    ip_address=ip_address
+                )
+            except Exception as e:
+                print(f"[AuditLog Error] {str(e)}")
+
             refresh = RefreshToken.for_user(user)
             return {
                 "is_created": True,

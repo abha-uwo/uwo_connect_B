@@ -31,10 +31,28 @@ class ClientSerializer(serializers.ModelSerializer):
     google_docs_config = serializers.SerializerMethodField()
     google_slides_config = serializers.SerializerMethodField()
     zoho_config = serializers.SerializerMethodField()
+    email = serializers.EmailField(write_only=True, required=False)
 
     class Meta:
         model = Client
         fields = '__all__'
+
+    def create(self, validated_data):
+        email = validated_data.pop('email', None)
+        client = Client.objects.create(**validated_data)
+        if email:
+            email_clean = email.lower().strip()
+            if not User.objects.filter(username=email_clean).exists() and not User.objects.filter(email=email_clean).exists():
+                User.objects.create_user(
+                    username=email_clean,
+                    email=email_clean,
+                    password="UwoConnect@123",
+                    first_name=client.business_name,
+                    role='CLIENT',
+                    status='PENDING',
+                    client=client
+                )
+        return client
 
     def get__id(self, obj):
         return str(obj.id)

@@ -255,7 +255,13 @@ class AdminImpersonateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        if request.user.role != 'ADMIN':
+        is_admin = bool(
+            request.user.role == 'ADMIN' or
+            getattr(request.user, 'enterprise_role', None) == 'SUPER_ADMIN' or
+            request.user.is_staff or
+            request.user.is_superuser
+        )
+        if not is_admin:
             return Response({"error": "Only admins can impersonate clients."}, status=status.HTTP_403_FORBIDDEN)
             
         client_id = request.data.get('client_id')
@@ -264,24 +270,50 @@ class AdminImpersonateView(APIView):
             
         try:
             client = ClientRepository.get_client(id=client_id)
-            user = UserRepository.filter_users(client=client, role='CLIENT').first()
+            user = UserRepository.filter_users(client=client, role='CLIENT').first() or UserRepository.filter_users(client=client).first()
             if not user:
                 return Response({"error": "No user registered under this client node to impersonate."}, status=status.HTTP_404_NOT_FOUND)
                 
             refresh = RefreshToken.for_user(user)
             refresh['impersonator_id'] = str(request.user.id)
             refresh['impersonator_username'] = request.user.username
+            refresh['impersonated_client_id'] = str(client.id)
+            refresh['impersonated_client_name'] = client.business_name
+
+            # Audit Log
+            try:
+                AuditLog.objects.create(
+                    admin_name=request.user.username,
+                    client_name=client.business_name,
+                    module="WORKSPACE_ACCESS",
+                    action="SUPER_ADMIN_IMPERSONATE",
+                    before_value="Admin Control Center",
+                    after_value=f"Impersonating Client #{client.id} ({client.business_name})",
+                    ip_address=request.META.get('REMOTE_ADDR') or '127.0.0.1'
+                )
+            except Exception:
+                pass
+
             return Response({
                 "access": str(refresh.access_token),
                 "refresh": str(refresh),
                 "user": {
                     "username": user.username,
                     "email": user.email,
-                    "role": user.role
+                    "role": user.role,
+                    "client_id": str(client.id),
+                    "business_name": client.business_name
+                },
+                "impersonating": {
+                    "client_id": str(client.id),
+                    "client_name": client.business_name,
+                    "impersonator_id": str(request.user.id),
+                    "impersonator_name": request.user.username
                 }
             })
         except Client.DoesNotExist:
             return Response({"error": "Client node not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):

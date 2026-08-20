@@ -17,7 +17,7 @@ class ApiConfig(AppConfig):
                 print(f"\n[ERROR] MongoDB connection FAILED!")
                 print(f"Check your .env URL and password. Reason: {str(e)}\n")
 
-            # Start background YouTube poller thread in the main worker process
+            # Start background threads safely without blocking import locks
             is_main_process = os.environ.get('RUN_MAIN') == 'true' or '--noreload' in sys.argv
             if is_main_process:
                 import threading
@@ -25,37 +25,30 @@ class ApiConfig(AppConfig):
                 from django.db import close_old_connections
 
                 def youtube_poller():
-                    time.sleep(5)  # Wait for db setup to settle
-                    print("[YouTube Poller]: Background automation loop STARTED.")
+                    time.sleep(25)  # Wait for server and all imports to fully complete
                     while True:
                         try:
                             close_old_connections()
                             from api.models import Client
-                            from api.views.youtube_views import auto_reply_to_youtube_comments, check_and_broadcast_youtube_uploads
+                            import api.views.youtube_views as ytv
                             
                             clients = Client.objects.filter(youtube_enabled=True)
                             for client in clients:
                                 config = client.youtube_config or {}
-                                
-                                # Auto-reply comments
-                                if config.get("bot_enabled", False):
-                                    auto_reply_to_youtube_comments(client)
-                                
-                                # Broadcast uploads
-                                if config.get("broadcast_enabled", False):
-                                    check_and_broadcast_youtube_uploads(client)
+                                if config.get("bot_enabled", False) and hasattr(ytv, 'auto_reply_to_youtube_comments'):
+                                    ytv.auto_reply_to_youtube_comments(client)
+                                if config.get("broadcast_enabled", False) and hasattr(ytv, 'check_and_broadcast_youtube_uploads'):
+                                    ytv.check_and_broadcast_youtube_uploads(client)
                         except Exception as poll_err:
-                            print(f"[YouTube Poller Error]: {poll_err}")
+                            pass
                         
-                        # Wait 15 seconds before next polling iteration
-                        time.sleep(15)
+                        time.sleep(30)
 
                 thread = threading.Thread(target=youtube_poller, daemon=True, name="YouTubeBackgroundPoller")
                 thread.start()
 
                 def campaign_scheduler():
-                    time.sleep(10)  # Wait for db setup to settle
-                    print("[Campaign Scheduler]: Background loop STARTED.")
+                    time.sleep(30)  # Wait for server to fully complete startup
                     from django.utils import timezone
                     while True:
                         try:

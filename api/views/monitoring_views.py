@@ -19,9 +19,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         if not user.client:
             return Conversation.objects.none()
         
-        # Using prefetch_related instead of select_related because MongoDB doesn't support SQL JOINs
-        # This still fixes the N+1 query issue without crashing the mongodb backend!
-        queryset = Conversation.objects.prefetch_related('contact', 'assigned_to', 'locked_by').filter(client=user.client)
+        queryset = Conversation.objects.filter(client=user.client)
         
         channel = self.request.query_params.get('channel')
         if channel and channel != 'ALL':

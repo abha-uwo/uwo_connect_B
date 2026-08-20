@@ -65,8 +65,15 @@ class LoginView(views.APIView):
         email = req.data.get('email', '').strip().lower()
         password = req.data.get('password', '')
 
+        # Extract client IP address
+        x_forwarded_for = req.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip_address = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip_address = req.META.get('REMOTE_ADDR')
+
         from ..services.auth_service import AuthService
-        result = AuthService.login_user(email, password)
+        result = AuthService.login_user(email, password, ip_address=ip_address)
         
         if "error" in result:
             return Response({"message": result["error"]}, status=result["status_code"])
@@ -111,8 +118,15 @@ class FirebaseLoginView(views.APIView):
         invite_token = req.data.get('invite_token', '').strip()
         business_name = req.data.get('business_name', '').strip()
 
+        # Extract client IP address
+        x_forwarded_for = req.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip_address = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip_address = req.META.get('REMOTE_ADDR')
+
         from ..services.auth_service import AuthService
-        result = AuthService.process_firebase_login(id_token, name, invite_token, business_name)
+        result = AuthService.process_firebase_login(id_token, name, invite_token, business_name, ip_address=ip_address)
 
         if "error" in result:
             return Response({"message": result["error"]}, status=result["status_code"])
@@ -145,8 +159,15 @@ class UWOLoginView(views.APIView):
         name = req.data.get('name', '').strip()
         uwo_token = req.data.get('uwo_token', '').strip()
 
+        # Extract client IP address
+        x_forwarded_for = req.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip_address = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip_address = req.META.get('REMOTE_ADDR')
+
         from ..services.auth_service import AuthService
-        result = AuthService.process_uwo_login(email, name, uwo_token)
+        result = AuthService.process_uwo_login(email, name, uwo_token, ip_address=ip_address)
 
         if "error" in result:
             return Response({"message": result["error"]}, status=result.get("status_code", 400))

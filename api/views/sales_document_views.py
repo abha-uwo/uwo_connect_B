@@ -36,7 +36,7 @@ class SalesDocumentViewSet(viewsets.ModelViewSet):
         if not client:
             return SalesDocument.objects.none()
         
-        qs = SalesDocument.objects.filter(client=client).prefetch_related('items', 'activities')
+        qs = SalesDocument.objects.filter(client=client)
         
         # Filter by document type
         doc_type = self.request.query_params.get('document_type')

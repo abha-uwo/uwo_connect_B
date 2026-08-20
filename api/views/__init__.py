@@ -36,5 +36,7 @@ from .razorpay_gateway_views import (
     ClientSalesDashboardView,
     ClientRefundView,
 )
+from .super_admin_views import *
+
 
 

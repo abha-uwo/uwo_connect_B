@@ -21,8 +21,8 @@ class GuideViewSet(viewsets.ModelViewSet):
         user = self.request.user
         # Admins can view all guides (including draft/archived), clients view PUBLISHED
         if user.is_staff or user.role == 'ADMIN':
-            return Guide.objects.all().prefetch_related('sections__steps')
-        return Guide.objects.filter(status='PUBLISHED').prefetch_related('sections__steps')
+            return Guide.objects.all()
+        return Guide.objects.filter(status='PUBLISHED')
 
     def get_serializer_class(self):
         if self.action == 'list':
