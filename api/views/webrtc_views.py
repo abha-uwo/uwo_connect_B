@@ -136,7 +136,9 @@ class WebRTCActiveCallCheckView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        cleanup_stale_sessions()
+        # Removed cleanup_stale_sessions() here because this endpoint is polled every 1.8s
+        # Executing 2 delete queries + 1 select query sequentially with high MongoDB latency
+        # causes the request to take 10-19s, blocking all other network requests.
         user_email = ""
         user_name = ""
         user_client_id = None

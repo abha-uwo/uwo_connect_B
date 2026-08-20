@@ -11,7 +11,17 @@ class MessageRepository:
         
     @staticmethod
     def create_message(**kwargs):
-        return Message.objects.create(**kwargs)
+        msg = Message.objects.create(**kwargs)
+        from ..models import Contact
+        from django.utils import timezone
+        
+        # Touch the contact's updated_at so it rises to the top of the inbox list
+        client = kwargs.get('client')
+        platform_id = msg.from_address if msg.message_type == 'INCOMING' else msg.to_address
+        if client and platform_id:
+            Contact.objects.filter(client=client, platform_id=platform_id).update(updated_at=timezone.now())
+            
+        return msg
 
 class SupportMessageRepository:
     @staticmethod

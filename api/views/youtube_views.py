@@ -116,7 +116,7 @@ class YouTubeCallbackView(APIView):
                 "client_secret": creds["client_secret"],
                 "redirect_uri": creds["redirect_uri"],
                 "grant_type": "authorization_code",
-            })
+            }, timeout=10)
             token_data = token_res.json()
         except Exception as e:
             logger.error(f"YouTube token exchange failed: {e}")
@@ -220,7 +220,7 @@ def _get_youtube_access_token(client_obj):
             from dotenv import load_dotenv
             load_dotenv(override=True)
             res = http_requests.post("https://oauth2.googleapis.com/token", data={
-                "client_id": os.environ.get("GMAIL_CLIENT_ID", ""),
+                "client_id": os.environ.get("GMAIL_CLIENT_ID", "", timeout=10),
                 "client_secret": os.environ.get("GMAIL_CLIENT_SECRET", ""),
                 "refresh_token": refresh_token,
                 "grant_type": "refresh_token",

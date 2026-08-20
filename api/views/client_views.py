@@ -4,7 +4,7 @@ from ..repositories.contact_repository import ContactRepository
 from ..repositories.client_repository import ClientRepository
 from ..repositories.message_repository import MessageRepository
 from ..permissions.custom_permissions import IsApprovedUser
-from rest_framework import status, views, viewsets
+from rest_framework import status, views, viewsets, filters
 from rest_framework.response import Response
 from firebase_admin import auth as firebase_auth
 from django.contrib.auth import authenticate
@@ -165,6 +165,9 @@ class ClientViewSet(viewsets.ModelViewSet):
 class ContactViewSet(viewsets.ModelViewSet):
     serializer_class = ContactSerializer
     permission_classes = [IsApprovedUser]
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['updated_at', 'created_at']
+    ordering = ['-updated_at']
 
     def get_queryset(self):
         client = get_tenant_client(self.request)
@@ -180,17 +183,22 @@ class ContactViewSet(viewsets.ModelViewSet):
             if 'fb_page' in assigned: allowed_channels.append('FACEBOOK')
             if 'gmail_main' in assigned: allowed_channels.append('GMAIL')
             
-            allowed_msg_addresses = Message.objects.filter(
+            from django.db.models import Q
+            
+            allowed_msg_from = Message.objects.filter(
                 client=client, 
                 channel__in=allowed_channels
-            ).values_list('from_address', 'to_address')
+            ).values_list('from_address', flat=True)
             
-            addresses = set()
-            for frm, to in allowed_msg_addresses:
-                addresses.add(frm)
-                addresses.add(to)
+            allowed_msg_to = Message.objects.filter(
+                client=client, 
+                channel__in=allowed_channels
+            ).values_list('to_address', flat=True)
             
-            qs = qs.filter(platform_id__in=addresses)
+            qs = qs.filter(
+                Q(platform_id__in=allowed_msg_from) | 
+                Q(platform_id__in=allowed_msg_to)
+            ).distinct()
             
         return qs
 
@@ -257,9 +265,11 @@ class ClientStatsView(APIView):
                 }
             }, status=200)
             
-        total_conversations = MessageRepository.filter_messages(client=client).values('from_address', 'to_address').distinct().count()
+        # Avoid slow distinct() aggregation queries in Djongo
+        # total_conversations = MessageRepository.filter_messages(client=client).values('from_address', 'to_address').distinct().count()
+        total_conversations = ContactRepository.filter_contacts(client=client).count()
         automation_runs = MessageRepository.filter_messages(client=client, message_type='OUTGOING', status='SENT').count()
-        active_users = ContactRepository.filter_contacts(client=client).count()
+        active_users = total_conversations
 
         # --- Live Resource Counts from Database ---
         # Connectors: count how many channel flags are enabled on this client
@@ -360,7 +370,23 @@ class ClientMessagesView(APIView):
         client = get_tenant_client(request)
         if not client:
             return Response([])
+            
+        contact_id = request.query_params.get('contact_id')
+        try:
+            limit = int(request.query_params.get('limit', 100))
+        except ValueError:
+            limit = 100
+            
+        try:
+            offset = int(request.query_params.get('offset', 0))
+        except ValueError:
+            offset = 0
+
         messages = MessageRepository.filter_messages(client=client)
+
+        channel_filter = request.query_params.get('channel')
+        if channel_filter and channel_filter != 'ALL':
+            messages = messages.filter(channel=channel_filter.upper())
 
         if request.user.role != 'CLIENT' and request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
             assigned = request.user.assigned_social_channels or []
@@ -372,7 +398,13 @@ class ClientMessagesView(APIView):
             
             messages = messages.filter(channel__in=allowed_channels)
 
-        messages = messages.order_by('-created_at')[:1000]
+        if contact_id:
+            from django.db.models import Q
+            messages = messages.filter(Q(from_address=contact_id) | Q(to_address=contact_id))
+
+        # Sort descending to get latest messages
+        messages = messages.order_by('-created_at')[offset:offset+limit]
+        
         data = []
         for msg in messages:
             data.append({

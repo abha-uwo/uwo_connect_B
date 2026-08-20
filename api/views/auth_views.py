@@ -139,6 +139,7 @@ class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        print("====== PROFILE VIEW HIT ======")
         if not request.user.client:
             return Response({"message": "No client associated"}, status=404)
         serializer = ClientSerializer(request.user.client)

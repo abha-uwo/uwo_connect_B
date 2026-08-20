@@ -58,6 +58,10 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
         folder = self.request.query_params.get('folder')
         if folder:
             qs = qs.filter(folder=folder)
+            
+        provider = self.request.query_params.get('provider')
+        if provider:
+            qs = qs.filter(account__provider=provider)
 
         search = self.request.query_params.get('search')
         if search:
@@ -76,12 +80,13 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
         if assigned_to:
             qs = qs.filter(assigned_to_id=assigned_to)
 
-        return qs
+        return qs.order_by('-created_at')
 
     def list(self, request, *args, **kwargs):
         client = getattr(request.user, 'client', None)
+        skip_sync = request.query_params.get('skip_sync', 'false').lower() == 'true'
         
-        if client:
+        if client and not skip_sync:
             from ..services.outlook_service import sync_outlook_emails
             from ..services.gmail_service import sync_incoming_gmails
             
@@ -109,8 +114,7 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
         folders = ['inbox', 'sent', 'drafts', 'scheduled', 'outbox', 'spam', 'trash', 'archived', 'deleted', 'important', 'starred', 'snoozed']
         counts = {}
         if client:
-            for f in folders:
-                counts[f] = EmailMessage.objects.filter(client=client, folder=f, is_read=False).count() or EmailMessage.objects.filter(client=client, folder=f).count()
+            pass
 
         return Response({
             'messages': response.data,

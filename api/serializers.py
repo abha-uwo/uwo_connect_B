@@ -40,16 +40,13 @@ class ClientSerializer(serializers.ModelSerializer):
         return str(obj.id)
 
     def get_total_contacts(self, obj):
-        from .models import Contact
-        return ContactRepository.filter_contacts(client=obj).count()
+        return getattr(obj, 'contact_count', 0)
 
     def get_total_workflows(self, obj):
-        from .models import Workflow
-        return WorkflowRepository.filter_workflows(client=obj).count()
+        return getattr(obj, 'workflow_count', 0)
 
     def get_total_bots(self, obj):
-        from .models import Automation
-        return AutomationRepository.filter_automations(client=obj).count()
+        return getattr(obj, 'automation_count', 0)
 
     def get_onedrive_config(self, obj):
         """Return OneDrive config without sensitive OAuth tokens."""
@@ -663,9 +660,9 @@ class SalesDocumentSerializer(serializers.ModelSerializer):
 class InvoiceSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
-    order = serializers.PrimaryKeyRelatedField(queryset=Order.objects.all(), required=False, allow_null=True)
-    contact = serializers.PrimaryKeyRelatedField(queryset=Contact.objects.all(), required=False, allow_null=True)
-    payment_record = serializers.PrimaryKeyRelatedField(queryset=ProductPayment.objects.all(), required=False, allow_null=True)
+    order = serializers.CharField(source='order_id', required=False, allow_null=True)
+    contact = serializers.CharField(source='contact_id', required=False, allow_null=True)
+    payment_record = serializers.CharField(source='payment_record_id', required=False, allow_null=True)
     invoice_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
