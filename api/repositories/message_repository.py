@@ -8,6 +8,14 @@ class MessageRepository:
     @staticmethod
     def get_message(id):
         return Message.objects.filter(id=id).first()
+
+    @staticmethod
+    def get_all_messages():
+        return Message.objects.all()
+
+    @staticmethod
+    def get_all():
+        return Message.objects.all()
         
     @staticmethod
     def create_message(**kwargs):
@@ -40,11 +48,3 @@ class TeamMessageRepository:
     @staticmethod
     def create_message(**kwargs):
         return TeamMessage.objects.create(**kwargs)
-
-    @staticmethod
-    def get_all_messages():
-        return Message.objects.all()
-
-    @staticmethod
-    def get_all():
-        return Message.objects.all()

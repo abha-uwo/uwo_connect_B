@@ -109,7 +109,8 @@ class OutlookConnectView(APIView):
         redirect_uri = get_redirect_uri()
 
         import json as _json
-        state_payload = _json.dumps({'client_id': str(request.user.client.id)})
+        client_id_val = str(request.user.client.id) if request.user.client else ''
+        state_payload = _json.dumps({'client_id': client_id_val})
 
         auth_url = (
             f"{AUTH_ENDPOINT}?"

@@ -11,6 +11,14 @@ class AutomationRepository:
             return Automation.objects.filter(trigger_word=trigger_word, client=client).first()
         return Automation.objects.filter(id=id).first()
 
+    @staticmethod
+    def get_all_automations():
+        return Automation.objects.all()
+
+    @staticmethod
+    def get_all():
+        return Automation.objects.all()
+
 class WorkflowRepository:
     @staticmethod
     def filter_workflows(**kwargs):
@@ -42,11 +50,3 @@ class WorkflowSessionRepository:
     @staticmethod
     def create_workflowsession(**kwargs):
         return WorkflowSession.objects.create(**kwargs)
-
-    @staticmethod
-    def get_all_automations():
-        return Automation.objects.all()
-
-    @staticmethod
-    def get_all():
-        return Automation.objects.all()

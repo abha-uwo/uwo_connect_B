@@ -163,8 +163,17 @@ class ClientViewSet(viewsets.ModelViewSet):
 
 
 class ContactViewSet(viewsets.ModelViewSet):
-    serializer_class = ContactSerializer
     permission_classes = [IsApprovedUser]
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['updated_at', 'created_at']
+    ordering = ['-updated_at']
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            from ..serializers import ContactListSerializer
+            return ContactListSerializer
+        from ..serializers import ContactSerializer
+        return ContactSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['updated_at', 'created_at']
     ordering = ['-updated_at']
@@ -175,6 +184,54 @@ class ContactViewSet(viewsets.ModelViewSet):
             return Contact.objects.none()
         qs = ContactRepository.filter_contacts(client=client)
 
+        search_query = self.request.query_params.get('search', None)
+        if search_query:
+            from django.db.models import Q
+            qs = qs.filter(Q(name__icontains=search_query) | Q(phone_number__icontains=search_query) | Q(platform_id__icontains=search_query))
+
+        channel_filter = self.request.query_params.get('preferred_channel', None)
+        if channel_filter and channel_filter != 'ALL':
+            from ..models import Conversation, Message
+            
+            allowed_convos = list(Conversation.objects.filter(client=client, channel=channel_filter.upper()).values_list('contact_platform_id', flat=True).distinct())
+            allowed_msg_from = list(Message.objects.filter(client=client, channel=channel_filter.upper()).values_list('from_address', flat=True).distinct())
+            allowed_msg_to = list(Message.objects.filter(client=client, channel=channel_filter.upper()).values_list('to_address', flat=True).distinct())
+            allowed_channel_contact_ids = list(set(allowed_convos + allowed_msg_from + allowed_msg_to))
+            
+            has_convos = list(Conversation.objects.filter(client=client).values_list('contact_platform_id', flat=True).distinct())
+            has_msg_from = list(Message.objects.filter(client=client).values_list('from_address', flat=True).distinct())
+            has_msg_to = list(Message.objects.filter(client=client).values_list('to_address', flat=True).distinct())
+            has_any_convo_ids = list(set(has_convos + has_msg_from + has_msg_to))
+            from django.db.models import Q
+            
+            if channel_filter.upper() == 'INSTAGRAM':
+                qs = qs.filter(
+                    Q(platform_id__in=allowed_channel_contact_ids) | 
+                    (~Q(platform_id__in=has_any_convo_ids) & Q(name__icontains='INSTAGRAM'))
+                )
+            elif channel_filter.upper() == 'FACEBOOK':
+                qs = qs.filter(
+                    Q(platform_id__in=allowed_channel_contact_ids) | 
+                    (~Q(platform_id__in=has_any_convo_ids) & Q(name__icontains='FACEBOOK'))
+                )
+            elif channel_filter.upper() == 'GMAIL':
+                qs = qs.filter(
+                    Q(platform_id__in=allowed_channel_contact_ids) | 
+                    (~Q(platform_id__in=has_any_convo_ids) & Q(platform_id__contains='@'))
+                )
+            elif channel_filter.upper() == 'WHATSAPP':
+                qs = qs.filter(
+                    Q(platform_id__in=allowed_channel_contact_ids) | 
+                    (
+                        ~Q(platform_id__in=has_any_convo_ids) & 
+                        ~Q(name__icontains='INSTAGRAM') & 
+                        ~Q(name__icontains='FACEBOOK') & 
+                        ~Q(platform_id__contains='@')
+                    )
+                )
+            else:
+                qs = qs.filter(platform_id__in=allowed_channel_contact_ids)
+
         if self.request.user.role != 'CLIENT' and self.request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
             assigned = self.request.user.assigned_social_channels or []
             allowed_channels = []
@@ -183,22 +240,25 @@ class ContactViewSet(viewsets.ModelViewSet):
             if 'fb_page' in assigned: allowed_channels.append('FACEBOOK')
             if 'gmail_main' in assigned: allowed_channels.append('GMAIL')
             
-            from django.db.models import Q
-            
-            allowed_msg_from = Message.objects.filter(
+            from ..models import Conversation, Message
+            allowed_convos = list(Conversation.objects.filter(
                 client=client, 
                 channel__in=allowed_channels
-            ).values_list('from_address', flat=True)
+            ).values_list('contact_platform_id', flat=True).distinct())
             
-            allowed_msg_to = Message.objects.filter(
+            allowed_msg_from = list(Message.objects.filter(
                 client=client, 
                 channel__in=allowed_channels
-            ).values_list('to_address', flat=True)
+            ).values_list('from_address', flat=True).distinct())
             
-            qs = qs.filter(
-                Q(platform_id__in=allowed_msg_from) | 
-                Q(platform_id__in=allowed_msg_to)
-            ).distinct()
+            allowed_msg_to = list(Message.objects.filter(
+                client=client, 
+                channel__in=allowed_channels
+            ).values_list('to_address', flat=True).distinct())
+            
+            allowed_contact_ids = list(set(allowed_convos + allowed_msg_from + allowed_msg_to))
+            
+            qs = qs.filter(platform_id__in=allowed_contact_ids)
             
         return qs
 
@@ -437,7 +497,7 @@ class ClientMessagesView(APIView):
         message_type = request.data.get('message_type', 'OUTGOING')
         
         if message_type == 'INTERNAL':
-            MessageRepository.create_message(
+            new_msg = MessageRepository.create_message(
                 client=client,
                 channel=channel or 'WHATSAPP',
                 from_address=client.business_name,
@@ -446,7 +506,18 @@ class ClientMessagesView(APIView):
                 message_type='INTERNAL',
                 status='SENT'
             )
-            return Response({"status": "internal_note_saved"})
+            return Response({
+                "id": str(new_msg.id),
+                "from_address": new_msg.from_address,
+                "to_address": new_msg.to_address,
+                "body": new_msg.body,
+                "channel": new_msg.channel,
+                "message_type": new_msg.message_type,
+                "status": new_msg.status,
+                "buttons": getattr(new_msg, 'buttons', []) or [],
+                "metadata": new_msg.metadata or {},
+                "created_at": new_msg.created_at
+            })
             
         # Detect channel if not provided
         if not channel:
@@ -477,13 +548,15 @@ class ClientMessagesView(APIView):
         except Exception as e:
             print(f"Failed to auto-pause bot for contact: {str(e)}")
         
+        new_msg = None
+        
         if channel == 'WHATSAPP':
             phone_number_id = client.whatsapp_phone_number_id or 'WHATSAPP_SYSTEM'
             webhook_view = WhatsAppWebhookView()
             try:
-                webhook_view.send_whatsapp_message(client, to_number, body, phone_number_id)
+                new_msg = webhook_view.send_whatsapp_message(client, to_number, body, phone_number_id)
             except Exception as _werr:
-                MessageRepository.create_message(
+                new_msg = MessageRepository.create_message(
                     client=client,
                     channel='WHATSAPP',
                     from_address=phone_number_id,
@@ -495,9 +568,9 @@ class ClientMessagesView(APIView):
         elif channel in ['INSTAGRAM', 'FACEBOOK']:
             webhook_view = FacebookInstagramWebhookView()
             try:
-                webhook_view.send_message(client, channel, to_number, body)
+                new_msg = webhook_view.send_message(client, channel, to_number, body)
             except Exception as _ferr:
-                MessageRepository.create_message(
+                new_msg = MessageRepository.create_message(
                     client=client,
                     channel=channel,
                     from_address=channel,
@@ -510,7 +583,7 @@ class ClientMessagesView(APIView):
             from ..services.gmail_service import send_gmail_message
             try:
                 send_gmail_message(client, to_number, body)
-                MessageRepository.create_message(
+                new_msg = MessageRepository.create_message(
                     client=client,
                     channel='GMAIL',
                     from_address=client.gmail_config.get('email_address', ''),
@@ -523,6 +596,20 @@ class ClientMessagesView(APIView):
                 return Response({"error": str(e)}, status=400)
         else:
             return Response({"error": f"Unsupported channel: {channel}"}, status=400)
+            
+        if new_msg:
+            return Response({
+                "id": str(new_msg.id),
+                "from_address": new_msg.from_address,
+                "to_address": new_msg.to_address,
+                "body": new_msg.body,
+                "channel": new_msg.channel,
+                "message_type": new_msg.message_type,
+                "status": new_msg.status,
+                "buttons": getattr(new_msg, 'buttons', []) or [],
+                "metadata": new_msg.metadata or {},
+                "created_at": new_msg.created_at
+            })
             
         return Response({"status": "sent"})
 

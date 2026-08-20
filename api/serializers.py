@@ -233,6 +233,34 @@ class ContactSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('client', 'created_at', 'updated_at')
 
+class ContactListSerializer(serializers.ModelSerializer):
+    id = ObjectIdField(read_only=True)
+    preferred_channel = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Contact
+        fields = ('id', 'name', 'phone_number', 'email', 'platform_id', 'stage', 'tags', 'bot_paused', 'is_archived', 'updated_at', 'created_at', 'preferred_channel')
+
+    def get_preferred_channel(self, obj):
+        from .models import Conversation
+        # Fast indexed lookup (client_id, contact_platform_id)
+        convo = Conversation.objects.filter(client_id=obj.client_id, contact_platform_id=obj.platform_id).first()
+        if convo:
+            return convo.channel
+            
+        # Dynamic fallback for contacts with no conversation
+        name = (obj.name or '').upper()
+        pid = obj.platform_id or ''
+        
+        if 'INSTAGRAM' in name:
+            return 'INSTAGRAM'
+        elif 'FACEBOOK' in name:
+            return 'FACEBOOK'
+        elif '@' in pid:
+            return 'GMAIL'
+        else:
+            return 'WHATSAPP'
+
 class TemplateSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
