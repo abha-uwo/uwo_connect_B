@@ -159,7 +159,73 @@ class AuthService:
                 }
 
     @staticmethod
+    def process_uwo_login(email, name, uwo_token=None):
+
+        email = (email or '').lower().strip()
+        name = (name or '').strip() or (email.split('@')[0] if email else 'User')
+
+        if not email:
+            return {"error": "Email is required for UWO authentication", "status_code": 400}
+
+        # Admin account handling
+        if email == 'admin@uwo24.com':
+            user, created = UserRepository.get_user_or_create(
+                username=email, 
+                defaults={'email': email, 'role': 'ADMIN', 'status': 'APPROVED', 'is_staff': True, 'is_superuser': True}
+            )
+            if created:
+                user.set_password(User.objects.make_random_password())
+                user.save()
+            elif not user.is_staff:
+                user.is_staff = True
+                user.is_superuser = True
+                user.save()
+
+            refresh = RefreshToken.for_user(user)
+            return {
+                "user": AuthService._serialize_user(user, override_name="System Admin"),
+                "token": str(refresh.access_token)
+            }
+
+        # Existing user check
+        user = UserRepository.filter_users(email=email).first()
+        if not user:
+            user = UserRepository.filter_users(username=email).first()
+
+        if user:
+            user.is_online = True
+            user.last_active_at = timezone.now()
+            user.save(update_fields=['is_online', 'last_active_at'])
+
+            refresh = RefreshToken.for_user(user)
+            return {
+                "user": AuthService._serialize_user(user),
+                "token": str(refresh.access_token)
+            }
+        else:
+            # JIT provision new client workspace and user
+            business_name = f"{name}'s Workspace"
+            client = ClientRepository.create_client(business_name=business_name)
+            user = UserRepository.create_user_user(
+                username=email,
+                email=email,
+                password=User.objects.make_random_password(),
+                first_name=name,
+                role='CLIENT',
+                status='APPROVED',
+                client=client
+            )
+            refresh = RefreshToken.for_user(user)
+            return {
+                "is_created": True,
+                "status": "APPROVED",
+                "user": AuthService._serialize_user(user),
+                "token": str(refresh.access_token)
+            }
+
+    @staticmethod
     def _serialize_user(user, override_name=None):
+
         return {
             "id": str(user.id),
             "_id": str(user.id),

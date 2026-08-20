@@ -1,7 +1,8 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    RegisterView, LoginView, GoogleLoginView, GoogleClientIdView, FirebaseLoginView, ClientViewSet, AutomationViewSet, WorkflowViewSet, 
+    RegisterView, LoginView, GoogleLoginView, GoogleClientIdView, FirebaseLoginView, UWOLoginView, ClientViewSet, AutomationViewSet, WorkflowViewSet, 
+
     ContactViewSet, AdminStatsView, ClientStatsView, AdminAutomationsView, AdminMessagesView, 
     WhatsAppWebhookView, FacebookInstagramWebhookView, AdminUsersView, ProfileView, ClientMessagesView, MediaProxyView,
     GlobalSettingsView, PlatformAssistantView, KnowledgeBaseView, TemplateViewSet, 
@@ -100,6 +101,8 @@ urlpatterns = [
     path('auth/google-calendar/callback', GoogleCalendarCallbackView.as_view(), name='google-calendar-callback'),
     path('auth/gmail/sync', GmailSyncView.as_view(), name='gmail-sync'),
     path('auth/firebase-login', FirebaseLoginView.as_view(), name='firebase-login'),
+    path('auth/uwo-login', UWOLoginView.as_view(), name='uwo-login'),
+
     path('auth/forgot-password/send-otp', ForgotPasswordSendOTPView.as_view(), name='forgot-password-send-otp'),
     path('auth/forgot-password/verify-otp', ForgotPasswordVerifyOTPView.as_view(), name='forgot-password-verify-otp'),
     path('auth/forgot-password/reset', ForgotPasswordResetView.as_view(), name='forgot-password-reset'),
