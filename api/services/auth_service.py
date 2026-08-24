@@ -165,12 +165,13 @@ class AuthService:
                 if not invite:
                     return {"error": "Invalid or expired invite token.", "status_code": 400}
                     
-                user = UserRepository.create_user_user(
+                user = User.objects.create_user(
                     username=email,
                     email=email,
                     password=User.objects.make_random_password(),
                     first_name=name,
                     role='AGENT',
+                    enterprise_role='EMPLOYEE',
                     status='APPROVED',
                     client=invite.client,
                     permissions=invite.permissions
@@ -203,8 +204,8 @@ class AuthService:
                 }
             else:
                 business_name = business_name or f"{name}'s Business"
-                client = ClientRepository.create_client(business_name=business_name)
-                user = UserRepository.create_user_user(
+                client = Client.objects.create(business_name=business_name)
+                user = User.objects.create_user(
                     username=email,
                     email=email,
                     password=User.objects.make_random_password(),
@@ -295,8 +296,8 @@ class AuthService:
         else:
             # JIT provision new client workspace and user
             business_name = f"{name}'s Workspace"
-            client = ClientRepository.create_client(business_name=business_name)
-            user = UserRepository.create_user_user(
+            client = Client.objects.create(business_name=business_name)
+            user = User.objects.create_user(
                 username=email,
                 email=email,
                 password=User.objects.make_random_password(),

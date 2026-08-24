@@ -44,3 +44,10 @@ from .client_intelligence_views import (
     ClientIntelligenceActionView,
     ClientIntelligenceExportView
 )
+from .admin_channel_access_views import (
+    AdminChannelAccessMatrixView,
+    AdminClientChannelAccessDetailView,
+    AdminBulkChannelAccessView,
+    AdminChannelAuditLogView
+)
+

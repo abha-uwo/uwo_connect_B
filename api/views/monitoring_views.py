@@ -9,6 +9,7 @@ from asgiref.sync import async_to_sync
 
 from ..models import Conversation, ConversationAuditLog, Message, User, Contact
 from ..serializers import ConversationSerializer, ConversationAuditLogSerializer, MessageSerializer
+from ..utils.channel_permissions import get_user_allowed_channels
 
 class ConversationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -18,12 +19,22 @@ class ConversationViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.client:
             return Conversation.objects.none()
+
+        allowed_channels = get_user_allowed_channels(user, user.client)
+        if not allowed_channels and user.role != 'ADMIN':
+            return Conversation.objects.none()
         
         queryset = Conversation.objects.filter(client=user.client)
+
+        if user.role != 'ADMIN':
+            queryset = queryset.filter(channel__in=allowed_channels)
         
         channel = self.request.query_params.get('channel')
         if channel and channel != 'ALL':
-            queryset = queryset.filter(channel=channel.upper())
+            if channel.upper() in allowed_channels or user.role == 'ADMIN':
+                queryset = queryset.filter(channel=channel.upper())
+            else:
+                return Conversation.objects.none()
             
         status_param = self.request.query_params.get('status')
         if status_param and status_param != 'ALL':

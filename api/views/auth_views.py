@@ -16,6 +16,7 @@ import requests
 import os
 import json
 from ..services.ai_service import get_ai_response, get_platform_assistance, get_rag_response, get_embedding, chunk_text, find_relevant_chunks
+from ..utils.channel_permissions import validate_channel_access
 from rest_framework.permissions import BasePermission
 
 def get_tenant_client(request):
@@ -207,6 +208,22 @@ class ProfileView(APIView):
             user.last_name = name_parts[1] if len(name_parts) > 1 else ''
             user.save()
 
+        # Validate channel permissions if channel configurations are being updated
+        if any(k in request.data for k in ['whatsapp_access_token', 'whatsapp_phone_number_id', 'whatsapp_waba_id', 'whatsapp_config']):
+            is_allowed, reason, status_code = validate_channel_access(request.user, 'whatsapp')
+            if not is_allowed:
+                return Response({"error": reason or "You do not have access to this channel."}, status=status_code)
+
+        if 'facebook_config' in request.data:
+            is_allowed, reason, status_code = validate_channel_access(request.user, 'facebook')
+            if not is_allowed:
+                return Response({"error": reason or "You do not have access to this channel."}, status=status_code)
+
+        if 'instagram_config' in request.data:
+            is_allowed, reason, status_code = validate_channel_access(request.user, 'instagram')
+            if not is_allowed:
+                return Response({"error": reason or "You do not have access to this channel."}, status=status_code)
+
         # Update Client fields
         serializer = ClientSerializer(request.user.client, data=request.data, partial=True)
         if serializer.is_valid():
@@ -301,6 +318,11 @@ class WhatsAppEmbeddedSignupView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # 0. Check admin channel access
+        is_allowed, reason, status_code = validate_channel_access(request.user, 'whatsapp')
+        if not is_allowed:
+            return Response({"error": reason or "You do not have access to this channel."}, status=status_code)
+
         code = request.data.get('code')
         if not code:
             return Response({"error": "No code provided"}, status=400)
@@ -377,6 +399,11 @@ class InstagramEmbeddedSignupView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # 0. Check admin channel access
+        is_allowed, reason, status_code = validate_channel_access(request.user, 'instagram')
+        if not is_allowed:
+            return Response({"error": reason or "You do not have access to this channel."}, status=status_code)
+
         access_token = request.data.get('access_token')
 
         import os
@@ -465,6 +492,11 @@ class FacebookEmbeddedSignupView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # 0. Check admin channel access
+        is_allowed, reason, status_code = validate_channel_access(request.user, 'facebook')
+        if not is_allowed:
+            return Response({"error": reason or "You do not have access to this channel."}, status=status_code)
+
         code = request.data.get('code')
         access_token = request.data.get('access_token')
 

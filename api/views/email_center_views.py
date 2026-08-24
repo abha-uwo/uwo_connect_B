@@ -61,7 +61,7 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
             
         provider = self.request.query_params.get('provider')
         if provider:
-            qs = qs.filter(account__provider=provider)
+            qs = qs.filter(Q(account__provider=provider) | Q(account__isnull=True))
 
         search = self.request.query_params.get('search')
         if search:
@@ -110,11 +110,12 @@ class EmailMessageViewSet(viewsets.ModelViewSet):
                 
         response = super().list(request, *args, **kwargs)
 
-        # Calculate folder counts
-        folders = ['inbox', 'sent', 'drafts', 'scheduled', 'outbox', 'spam', 'trash', 'archived', 'deleted', 'important', 'starred', 'snoozed']
+        # Calculate real dynamic folder counts from database
+        folders = ['inbox', 'sent', 'drafts', 'scheduled', 'outbox', 'spam', 'trash', 'archive']
         counts = {}
         if client:
-            pass
+            for f in folders:
+                counts[f] = EmailMessage.objects.filter(client=client, folder=f).count()
 
         return Response({
             'messages': response.data,

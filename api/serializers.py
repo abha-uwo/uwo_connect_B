@@ -139,7 +139,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'username', 'email', 'name', 'first_name', 'role', 'enterprise_role', 'department',
-            'designation', 'reporting_manager', 'reporting_manager_name', 'status', 'client',
+            'designation', 'phone_number', 'reporting_manager', 'reporting_manager_name', 'status', 'client',
             'permissions', 'assigned_platforms', 'assigned_social_channels', 'permission_matrix',
             'employee_id', 'joining_date', 'working_hours', 'salary_visibility', 'skills',
             'availability_status', 'is_online', 'last_active_at', 'timezone', 'language',
@@ -183,6 +183,9 @@ class RegisterSerializer(serializers.Serializer):
     name = serializers.CharField()
     businessName = serializers.CharField(required=False, allow_blank=True)
     invite_token = serializers.CharField(required=False, allow_blank=True)
+    phone_number = serializers.CharField(required=False, allow_blank=True)
+    designation = serializers.CharField(required=False, allow_blank=True)
+    department = serializers.CharField(required=False, allow_blank=True)
 
     def validate_email(self, value):
         email = value.lower().strip()
@@ -194,6 +197,9 @@ class RegisterSerializer(serializers.Serializer):
         email = validated_data['email'].lower().strip()
         business_name = validated_data.get('businessName', f"{validated_data['name']}'s Business")
         invite_token = validated_data.get('invite_token')
+        phone_number = validated_data.get('phone_number', '').strip()
+        designation = validated_data.get('designation', '').strip() or 'Team Member'
+        department = validated_data.get('department', '').strip() or 'General'
 
         if invite_token:
             from django.utils import timezone
@@ -211,7 +217,12 @@ class RegisterSerializer(serializers.Serializer):
                 email=email,
                 password=validated_data['password'],
                 first_name=validated_data['name'],
+                phone_number=phone_number,
+                employee_id=phone_number,
+                designation=designation,
+                department=department,
                 role='AGENT',
+                enterprise_role='EMPLOYEE',
                 status='APPROVED',
                 client=invite.client,
                 permissions=invite.permissions
@@ -222,13 +233,19 @@ class RegisterSerializer(serializers.Serializer):
                 invite.save()
             return user
         else:
-            client = Client.objects.create(business_name=business_name)
+            client = Client.objects.create(
+                business_name=business_name,
+                phone_number=phone_number
+            )
     
             user = User.objects.create_user(
                 username=email,
                 email=email,
                 password=validated_data['password'],
                 first_name=validated_data['name'],
+                phone_number=phone_number,
+                designation=designation,
+                department=department,
                 role='CLIENT',
                 status='PENDING',
                 client=client

@@ -486,9 +486,12 @@ class ClientIntelligenceListView(APIView):
         if search:
             qs = qs.filter(
                 Q(business_name__icontains=search) | 
-                Q(client_name__icontains=search) |
-                Q(phone_number__icontains=search)
-            )
+                Q(phone_number__icontains=search) |
+                Q(users__first_name__icontains=search) |
+                Q(users__last_name__icontains=search) |
+                Q(users__email__icontains=search) |
+                Q(users__username__icontains=search)
+            ).distinct()
 
         if status_filter != 'ALL':
             qs = qs.filter(status=status_filter)
@@ -563,10 +566,10 @@ class ClientIntelligenceListView(APIView):
             c_orders = order_lookup.get(cid, [])
 
             primary_user = next((u for u in c_users if u['role'] == 'CLIENT'), c_users[0] if c_users else None)
-            owner_name = f"{primary_user['first_name']} {primary_user['last_name']}".strip() if primary_user else (client.client_name or '')
+            owner_name = f"{primary_user['first_name']} {primary_user['last_name']}".strip() if primary_user else ''
             if not owner_name and primary_user:
                 owner_name = primary_user['username']
-            owner_email = primary_user['email'] if primary_user else (client.settings.get('email') or 'N/A')
+            owner_email = primary_user['email'] if primary_user else (client.settings.get('email') if isinstance(client.settings, dict) else 'N/A')
             approval_status = primary_user['status'] if primary_user else 'APPROVED'
 
             # Filter by approval status if specified
@@ -600,8 +603,8 @@ class ClientIntelligenceListView(APIView):
 
             results.append({
                 'id': cid,
-                'business_name': client.business_name or client.client_name or 'Unnamed Business',
-                'client_name': owner_name or client.client_name or 'N/A',
+                'business_name': client.business_name or 'Unnamed Business',
+                'client_name': owner_name or client.business_name or 'N/A',
                 'email': owner_email,
                 'phone_number': client.phone_number or client.whatsapp_phone_number_id or '',
                 'created_at': client.created_at.isoformat() if client.created_at else None,
@@ -625,7 +628,7 @@ class ClientIntelligenceListView(APIView):
                 'sales': {
                     'orders_count': len(c_orders),
                     'total_revenue': total_rev,
-                    'currency_symbol': client.settings.get('currency_symbol', '₹') if client.settings else '₹'
+                    'currency_symbol': client.settings.get('currency_symbol', '₹') if isinstance(client.settings, dict) else '₹'
                 },
                 'invoices': {
                     'total': len(c_invoices),
@@ -700,7 +703,8 @@ class ClientIntelligenceDetailView(APIView):
         owner_name = f"{primary_user.first_name} {primary_user.last_name}".strip() if primary_user else ''
         if not owner_name and primary_user:
             owner_name = primary_user.username
-        owner_email = primary_user.email if primary_user else (client.settings.get('email') or 'N/A')
+        client_settings = client.settings if isinstance(client.settings, dict) else {}
+        owner_email = primary_user.email if primary_user else (client_settings.get('email') or 'N/A')
         approval_status = primary_user.status if primary_user else 'APPROVED'
 
         # ── 2. Projects & Mapping ──
@@ -709,14 +713,16 @@ class ClientIntelligenceDetailView(APIView):
         for p in projects:
             assigned_members = []
             for m in p.members.all():
+                m_channels = getattr(m, 'assigned_social_channels', None) or []
+                m_matrix = getattr(m, 'permission_matrix', None) or {}
                 assigned_members.append({
                     'id': str(m.id),
                     'name': f"{m.first_name} {m.last_name}".strip() or m.username,
                     'email': m.email,
                     'enterprise_role': m.enterprise_role or m.role,
                     'department': m.department,
-                    'assigned_channels': getattr(m, 'assigned_social_channels', []),
-                    'permission_level': getattr(m, 'permission_matrix', {}).get(p.name, 'FULL' if m.role == 'ADMIN' else 'MEMBER'),
+                    'assigned_channels': m_channels,
+                    'permission_level': m_matrix.get(p.name, 'FULL' if m.role == 'ADMIN' else 'MEMBER'),
                     'status': m.status
                 })
 
@@ -733,7 +739,7 @@ class ClientIntelligenceDetailView(APIView):
                 'deadline': str(p.deadline) if p.deadline else None,
                 'total_members_count': len(assigned_members),
                 'assigned_members': assigned_members,
-                'active_channels': client.settings.get(f'project_channels_{p.id}', ['WhatsApp', 'Instagram'] if client.whatsapp_access_token else []),
+                'active_channels': client_settings.get(f'project_channels_{p.id}', ['WhatsApp', 'Instagram'] if client.whatsapp_access_token else []),
                 'tasks_count': Task.objects.filter(project=p).count(),
                 'created_at': p.created_at.strftime('%b %d, %Y')
             })
@@ -745,8 +751,8 @@ class ClientIntelligenceDetailView(APIView):
         team_list = []
         for m in team_members:
             member_projects = [p.name for p in projects if m in p.members.all()]
-            assigned_ch = getattr(m, 'assigned_social_channels', [])
-            perm_matrix = getattr(m, 'permission_matrix', {})
+            assigned_ch = getattr(m, 'assigned_social_channels', None) or []
+            perm_matrix = getattr(m, 'permission_matrix', None) or {}
 
             team_list.append({
                 'id': str(m.id),
@@ -768,8 +774,9 @@ class ClientIntelligenceDetailView(APIView):
         # Channel Access Matrix cross-table data
         channel_matrix = []
         for m in team_members:
-            assigned_ch_keys = [ch.lower() for ch in getattr(m, 'assigned_social_channels', [])]
-            perm_matrix = getattr(m, 'permission_matrix', {})
+            m_channels = getattr(m, 'assigned_social_channels', None) or []
+            assigned_ch_keys = [ch.lower() for ch in m_channels if isinstance(ch, str)]
+            perm_matrix = getattr(m, 'permission_matrix', None) or {}
 
             row_channels = {}
             for ch in all_channels:

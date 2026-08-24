@@ -22,6 +22,7 @@ class Client(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
     
     # Enablement Flags
+    whatsapp_enabled = models.BooleanField(default=True)
     facebook_enabled = models.BooleanField(default=False)
     instagram_enabled = models.BooleanField(default=False)
     gmail_enabled = models.BooleanField(default=False)
@@ -34,6 +35,9 @@ class Client(models.Model):
     youtube_enabled = models.BooleanField(default=False)
     google_news_enabled = models.BooleanField(default=False)
     outlook_enabled = models.BooleanField(default=False)
+    
+    # Admin Controlled Channel Access Permissions (e.g. {"whatsapp": True, "facebook": True, "instagram": False})
+    channel_access = models.JSONField(default=dict, blank=True)
     
     # WhatsApp Config
     whatsapp_access_token = models.TextField(null=True, blank=True)
@@ -84,6 +88,50 @@ class Client(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def has_channel_access(self, channel_name):
+        """
+        Returns True if the client has admin-granted access to this channel.
+        WhatsApp, Facebook, Instagram default to True unless explicitly disabled in channel_access.
+        Other channels (Gmail, Zoho, Google Sheets, Calendar, etc.) are enabled if Admin explicitly granted access
+        in channel_access or via model enablement flags.
+        """
+        key = str(channel_name).lower().strip()
+        if isinstance(self.channel_access, dict) and key in self.channel_access:
+            return bool(self.channel_access[key])
+        if key == 'whatsapp':
+            return bool(self.whatsapp_enabled)
+        if key in ('facebook', 'instagram'):
+            return True
+        # Check model field (e.g. gmail_enabled, zoho_enabled, etc.)
+        field_name = f"{key}_enabled"
+        if hasattr(self, field_name):
+            return bool(getattr(self, field_name, False))
+        return False
+
+    def get_channel_access_dict(self):
+        """
+        Returns full dict of channel permissions for all supported platform channels.
+        """
+        ca = self.channel_access if isinstance(self.channel_access, dict) else {}
+        ALL_KEYS = [
+            'whatsapp', 'facebook', 'instagram', 'gmail', 'outlook', 'onedrive',
+            'google_calendar', 'google_sheets', 'google_docs', 'google_slides',
+            'zoho', 'youtube', 'google_news', 'telegram', 'linkedin', 'twitter', 'tiktok'
+        ]
+        result = {}
+        for k in ALL_KEYS:
+            if k in ca:
+                result[k] = bool(ca[k])
+            elif k == 'whatsapp':
+                result[k] = bool(self.whatsapp_enabled)
+            elif k in ('facebook', 'instagram'):
+                result[k] = True
+            elif hasattr(self, f"{k}_enabled"):
+                result[k] = bool(getattr(self, f"{k}_enabled", False))
+            else:
+                result[k] = False
+        return result
+
     def __str__(self):
         return self.business_name
 
@@ -119,6 +167,7 @@ class User(AbstractUser):
     permissions = models.JSONField(default=list, blank=True)
     assigned_platforms = models.JSONField(default=list, blank=True) # e.g. ["CRM", "WHATSAPP", "ORDERS", "PROJECTS"]
     employee_id = models.CharField(max_length=50, null=True, blank=True)
+    phone_number = models.CharField(max_length=50, null=True, blank=True)
     joining_date = models.DateField(null=True, blank=True)
     working_hours = models.CharField(max_length=50, default='9:00 AM - 6:00 PM', blank=True)
     salary_visibility = models.BooleanField(default=False)
@@ -1539,4 +1588,31 @@ class Invoice(models.Model):
 
     def __str__(self):
         return f"{self.invoice_number} ({self.currency} {self.total})"
+
+
+class ChannelAuditLog(models.Model):
+    ACTION_CHOICES = [
+        ('ACCESS_GRANTED', 'Access Granted'),
+        ('ACCESS_REVOKED', 'Access Revoked'),
+        ('BULK_GRANTED', 'Bulk Access Granted'),
+        ('BULK_REVOKED', 'Bulk Access Revoked'),
+        ('MEMBER_ASSIGNED', 'Member Channel Assigned'),
+        ('MEMBER_REVOKED', 'Member Channel Revoked'),
+    ]
+
+    admin_user = models.CharField(max_length=255, default='Admin')
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='channel_audit_logs')
+    channel = models.CharField(max_length=50) # whatsapp, facebook, instagram, etc.
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    previous_state = models.JSONField(default=dict, blank=True)
+    new_state = models.JSONField(default=dict, blank=True)
+    notes = models.TextField(blank=True, default='')
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f"[{self.timestamp}] {self.admin_user} -> {self.client.business_name} ({self.channel}): {self.action}"
+
 

@@ -41,7 +41,9 @@ from .views import (
     SuperAdminProjectAssignMembersView, SuperAdminAllTeamsView, SuperAdminTeamChannelDetailView,
     SuperAdminTeamChannelAssignMembersView, SuperAdminMemberDetailView, SuperAdminTeamAnalyticsView,
     ClientIntelligenceStatsView, ClientIntelligenceListView, ClientIntelligenceDetailView,
-    ClientIntelligenceActionView, ClientIntelligenceExportView
+    ClientIntelligenceActionView, ClientIntelligenceExportView,
+    AdminChannelAccessMatrixView, AdminClientChannelAccessDetailView,
+    AdminBulkChannelAccessView, AdminChannelAuditLogView
 )
 from api.views.zoho_views import ZohoConnectView, ZohoCallbackView, ZohoDisconnectView, ZohoTestLeadView
 
@@ -428,4 +430,14 @@ urlpatterns = [
     path('public/invoice/<str:token>/', PublicInvoiceView.as_view()),
     path('public/invoice/<str:token>/pdf', PublicInvoicePDFView.as_view()),
     path('public/invoice/<str:token>/pdf/', PublicInvoicePDFView.as_view()),
+
+    # Admin Channel Feature Lock & Access Control Endpoints
+    path('admin/channel-access/', AdminChannelAccessMatrixView.as_view(), name='admin-channel-access-matrix'),
+    path('admin/channel-access/matrix/', AdminChannelAccessMatrixView.as_view()),
+    path('admin/channel-access/client/<str:client_id>/', AdminClientChannelAccessDetailView.as_view(), name='admin-channel-access-client'),
+    path('admin/channel-access/client/<str:client_id>', AdminClientChannelAccessDetailView.as_view()),
+    path('admin/channel-access/bulk/', AdminBulkChannelAccessView.as_view(), name='admin-channel-access-bulk'),
+    path('admin/channel-access/bulk', AdminBulkChannelAccessView.as_view()),
+    path('admin/channel-access/audit-logs/', AdminChannelAuditLogView.as_view(), name='admin-channel-access-audit-logs'),
+    path('admin/channel-access/audit-logs', AdminChannelAuditLogView.as_view()),
 ]

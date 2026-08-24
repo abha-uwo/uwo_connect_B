@@ -555,7 +555,11 @@ class SuperAdminClientsListView(APIView):
         for client in clients_qs:
             primary_user = client.users.filter(role='CLIENT').first() or client.users.first()
             user_email = primary_user.email if primary_user else ''
-            user_name = f"{primary_user.first_name} {primary_user.last_name}".strip() or primary_user.username if primary_user else client.business_name
+            user_name = ''
+            if primary_user:
+                user_name = f"{primary_user.first_name} {primary_user.last_name}".strip() or primary_user.username or ''
+            if not user_name:
+                user_name = client.business_name
             user_phone = client.phone_number or (primary_user.employee_id if primary_user else '')
             approval_status = primary_user.status if primary_user else 'PENDING'
             last_active = primary_user.last_active_at if primary_user else client.updated_at
@@ -1981,9 +1985,17 @@ class SuperAdminChannelsListView(APIView):
         channels_inventory = []
 
         for c in clients:
+            primary_user = c.users.filter(role='CLIENT').first() or c.users.first()
+            user_email = primary_user.email if primary_user else ''
+            user_name = ''
+            if primary_user:
+                user_name = f"{primary_user.first_name} {primary_user.last_name}".strip() or primary_user.username or ''
             channels_inventory.append({
                 "client_id": str(c.id),
                 "client_name": c.business_name,
+                "user_email": user_email,
+                "user_name": user_name,
+                "phone_number": c.phone_number or '',
                 "whatsapp": {
                     "connected": bool(c.whatsapp_access_token or c.whatsapp_phone_number_id),
                     "phone_number_id": c.whatsapp_phone_number_id or '—',
