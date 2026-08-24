@@ -156,11 +156,11 @@ class AuthService:
         else:
             # New user logic
             if invite_token:
-                invite = TeamInviteRepository.filter_teaminvites(
+                from django.db.models import Q
+                invite = TeamInvite.objects.filter(
                     token=invite_token, 
-                    is_used=False, 
                     expires_at__gt=timezone.now()
-                ).first()
+                ).filter(Q(is_used=False) | Q(is_qr=True)).first()
                 
                 if not invite:
                     return {"error": "Invalid or expired invite token.", "status_code": 400}
@@ -176,8 +176,9 @@ class AuthService:
                     permissions=invite.permissions
                 )
                 
-                invite.is_used = True
-                invite.save()
+                if not invite.is_qr:
+                    invite.is_used = True
+                    invite.save()
                 
                 # Create AuditLog for REGISTER & LOGIN
                 try:

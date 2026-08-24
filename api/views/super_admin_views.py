@@ -3118,11 +3118,26 @@ class SuperAdminMemberDetailView(APIView):
 
     def delete(self, request, member_id):
         try:
-            user = User.objects.get(id=member_id)
+            from django.db.models import Q
+            user = User.objects.filter(Q(id=member_id) | Q(username=member_id) | Q(email=member_id)).first()
+            if not user:
+                return Response({"message": "User already deleted or not found."}, status=status.HTTP_200_OK)
+
             name = user.username
             client_name = user.client.business_name if user.client else 'Platform'
+
+            # Clean M2M relations before deletion
+            try:
+                for p in Project.objects.filter(members=user):
+                    p.members.remove(user)
+                for tc in TeamChannel.objects.filter(members=user):
+                    tc.members.remove(user)
+            except Exception:
+                pass
+
             user.delete()
             log_super_admin_action(request, client_name, 'TEAM', 'DELETE_MEMBER', before_val=name)
             return Response({"message": f"Member {name} deleted successfully."})
-        except User.DoesNotExist:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"Failed to delete member: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+

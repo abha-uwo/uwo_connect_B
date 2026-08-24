@@ -762,5 +762,95 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         return Response(LeaveRequestSerializer(leave).data)
 
 
+import uuid
+
+class TeamInviteQRView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        client = getattr(request.user, 'client', None)
+        if not client:
+            return Response({"error": "No client associated"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        now = timezone.now()
+        invite = TeamInvite.objects.filter(
+            client=client,
+            is_qr=True,
+            expires_at__gt=now
+        ).order_by('-created_at').first()
+
+        if not invite:
+            token = uuid.uuid4().hex
+            expires_at = now + datetime.timedelta(days=365)
+            invite = TeamInvite.objects.create(
+                client=client,
+                email='',
+                token=token,
+                permissions=[],
+                expires_at=expires_at,
+                is_qr=True
+            )
+
+        return Response({
+            "invite_token": invite.token,
+            "business_name": client.business_name,
+            "expires_at": invite.expires_at,
+            "is_qr": True
+        })
+
+    def post(self, request):
+        client = getattr(request.user, 'client', None)
+        if not client:
+            return Response({"error": "No client associated"}, status=status.HTTP_400_BAD_REQUEST)
+
+        TeamInvite.objects.filter(client=client, is_qr=True).update(is_used=True)
+
+        now = timezone.now()
+        token = uuid.uuid4().hex
+        expires_at = now + datetime.timedelta(days=365)
+        invite = TeamInvite.objects.create(
+            client=client,
+            email='',
+            token=token,
+            permissions=[],
+            expires_at=expires_at,
+            is_qr=True
+        )
+
+        return Response({
+            "invite_token": invite.token,
+            "business_name": client.business_name,
+            "expires_at": invite.expires_at,
+            "is_qr": True
+        }, status=status.HTTP_201_CREATED)
+
+
+class TeamInviteValidateView(APIView):
+    permission_classes = []
+
+    def get(self, request):
+        token = request.query_params.get('token', '').strip()
+        if not token:
+            return Response({"valid": False, "error": "Token is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.db.models import Q
+        now = timezone.now()
+        invite = TeamInvite.objects.filter(
+            token=token,
+            expires_at__gt=now
+        ).filter(Q(is_used=False) | Q(is_qr=True)).first()
+
+        if not invite:
+            return Response({"valid": False, "error": "Invalid or expired invite token"}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            "valid": True,
+            "business_name": invite.client.business_name,
+            "client_id": invite.client.id,
+            "is_qr": invite.is_qr
+        })
+
+
+
 
 

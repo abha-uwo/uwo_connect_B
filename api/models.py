@@ -141,15 +141,16 @@ class User(AbstractUser):
 
 class TeamInvite(models.Model):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='team_invites')
-    email = models.EmailField()
+    email = models.EmailField(blank=True, default='')
     token = models.CharField(max_length=64, unique=True)
     permissions = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)
+    is_qr = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"Invite for {self.email} to {self.client.business_name}"
+        return f"Invite for {self.email or 'QR Code'} to {self.client.business_name}"
 
 class PasswordResetOTP(models.Model):
     email = models.EmailField()

@@ -37,6 +37,10 @@ from .razorpay_gateway_views import (
     ClientRefundView,
 )
 from .super_admin_views import *
-
-
-
+from .client_intelligence_views import (
+    ClientIntelligenceStatsView,
+    ClientIntelligenceListView,
+    ClientIntelligenceDetailView,
+    ClientIntelligenceActionView,
+    ClientIntelligenceExportView
+)

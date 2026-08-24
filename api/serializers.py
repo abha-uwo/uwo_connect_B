@@ -197,11 +197,11 @@ class RegisterSerializer(serializers.Serializer):
 
         if invite_token:
             from django.utils import timezone
-            invite = TeamInviteRepository.filter_teaminvites(
+            from django.db.models import Q
+            invite = TeamInvite.objects.filter(
                 token=invite_token, 
-                is_used=False, 
                 expires_at__gt=timezone.now()
-            ).first()
+            ).filter(Q(is_used=False) | Q(is_qr=True)).first()
             
             if not invite:
                 raise serializers.ValidationError({"invite_token": "Invalid or expired invite token."})
@@ -217,8 +217,9 @@ class RegisterSerializer(serializers.Serializer):
                 permissions=invite.permissions
             )
             
-            invite.is_used = True
-            invite.save()
+            if not invite.is_qr:
+                invite.is_used = True
+                invite.save()
             return user
         else:
             client = Client.objects.create(business_name=business_name)
@@ -456,6 +457,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
     user_name = serializers.ReadOnlyField(source='user.username')
+    user_email = serializers.ReadOnlyField(source='user.email')
+    user_department = serializers.ReadOnlyField(source='user.department')
 
     class Meta:
         model = Attendance
