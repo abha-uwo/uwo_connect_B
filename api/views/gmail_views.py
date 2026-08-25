@@ -7,9 +7,12 @@ from django.core.cache import cache
 from django.http import HttpResponseRedirect
 from api.models import Client
 
-# Allow HTTP traffic for local development
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+from django.conf import settings
+
+# Allow HTTP traffic strictly during local development debugging
+if getattr(settings, 'DEBUG', False):
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 

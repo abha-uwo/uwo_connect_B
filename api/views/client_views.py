@@ -193,69 +193,23 @@ class ContactViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(name__icontains=search_query) | Q(phone_number__icontains=search_query) | Q(platform_id__icontains=search_query))
 
         channel_filter = self.request.query_params.get('preferred_channel', None)
-        from ..models import Conversation, Message
-        from django.db.models import Q
-
         if channel_filter and channel_filter != 'ALL':
-            target_channels = [channel_filter.upper()]
-        else:
-            target_channels = allowed_channels
-
-        allowed_convos = list(Conversation.objects.filter(
-            client=client, 
-            channel__in=target_channels
-        ).values_list('contact_platform_id', flat=True).distinct())
-
-        allowed_msg_from = list(Message.objects.filter(
-            client=client, 
-            channel__in=target_channels
-        ).values_list('from_address', flat=True).distinct())
-
-        allowed_msg_to = list(Message.objects.filter(
-            client=client, 
-            channel__in=target_channels
-        ).values_list('to_address', flat=True).distinct())
-
-        allowed_channel_contact_ids = list(set(allowed_convos + allowed_msg_from + allowed_msg_to))
-
-        if channel_filter and channel_filter != 'ALL':
-            if channel_filter.upper() == 'INSTAGRAM':
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) | 
-                    Q(preferred_channel='INSTAGRAM') |
-                    Q(name__icontains='INSTAGRAM')
-                )
-            elif channel_filter.upper() == 'FACEBOOK':
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) | 
-                    Q(preferred_channel='FACEBOOK') |
-                    Q(name__icontains='FACEBOOK')
-                )
-            elif channel_filter.upper() == 'GMAIL':
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) | 
-                    Q(preferred_channel='GMAIL') |
-                    Q(platform_id__contains='@')
-                )
-            elif channel_filter.upper() == 'WHATSAPP':
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) | 
-                    Q(preferred_channel='WHATSAPP') |
-                    (
-                        ~Q(name__icontains='INSTAGRAM') & 
-                        ~Q(name__icontains='FACEBOOK') & 
-                        ~Q(platform_id__contains='@')
-                    )
-                )
+            from django.db.models import Q
+            ch = channel_filter.upper()
+            if ch == 'INSTAGRAM':
+                qs = qs.filter(Q(name__icontains='INSTAGRAM') | Q(platform_id__startswith='ig_'))
+            elif ch == 'FACEBOOK':
+                qs = qs.filter(Q(name__icontains='FACEBOOK') | Q(platform_id__startswith='fb_'))
+            elif ch == 'GMAIL':
+                qs = qs.filter(Q(platform_id__contains='@') | Q(email__contains='@'))
+            elif ch == 'WHATSAPP':
+                qs = qs.exclude(name__icontains='INSTAGRAM')\
+                       .exclude(name__icontains='FACEBOOK')\
+                       .exclude(platform_id__contains='@')\
+                       .exclude(platform_id__startswith='ig_')\
+                       .exclude(platform_id__startswith='fb_')
             else:
-                qs = qs.filter(platform_id__in=allowed_channel_contact_ids)
-        else:
-            # If viewing ALL, show all contacts in allowed channels OR all workspace contacts
-            if set(allowed_channels) < {'WHATSAPP', 'FACEBOOK', 'INSTAGRAM'}:
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) |
-                    Q(preferred_channel__in=allowed_channels)
-                )
+                qs = qs.filter(platform_id__startswith=f"{ch.lower()}_")
 
         return qs
 
@@ -610,48 +564,127 @@ class ClientMessagesView(APIView):
             
         return Response({"status": "sent"})
 
+import ipaddress
+import socket
+import urllib.parse
+
+# Trusted Meta / WhatsApp CDN domains allowed for media proxying
+ALLOWED_MEDIA_DOMAINS = {
+    'graph.facebook.com',
+    'lookaside.fbsbx.com',
+    'pps.whatsapp.net',
+    'mmg.whatsapp.net',
+    'fbcdn.net',
+}
+
+def is_safe_media_url(target_url: str) -> bool:
+    """
+    Validates that target_url is strictly HTTPS and points exclusively to
+    verified Meta/WhatsApp public CDN infrastructure, preventing SSRF attacks.
+    """
+    if not target_url or not isinstance(target_url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(target_url)
+        if parsed.scheme != 'https':
+            return False
+            
+        hostname = (parsed.hostname or '').lower().strip()
+        if not hostname:
+            return False
+
+        # Validate domain against allowed Meta/WhatsApp CDN whitelist
+        domain_allowed = any(
+            hostname == allowed or hostname.endswith('.' + allowed)
+            for allowed in ALLOWED_MEDIA_DOMAINS
+        )
+        if not domain_allowed:
+            return False
+
+        # Resolve hostname to IP and ensure it is not a private, loopback, or link-local address
+        ip_addr = socket.gethostbyname(hostname)
+        ip_obj = ipaddress.ip_address(ip_addr)
+        if (ip_obj.is_private or ip_obj.is_loopback or 
+            ip_obj.is_link_local or ip_obj.is_reserved or ip_obj.is_multicast):
+            return False
+
+        return True
+    except Exception as e:
+        logger.warning("SSRF check rejected URL '%s': %s", target_url, e)
+        return False
+
+
 class MediaProxyView(APIView):
-    """Proxy endpoint to stream WhatsApp/Meta media files to the frontend with correct Content-Type."""
-    permission_classes = []
-    authentication_classes = []
+    """
+    Secure proxy endpoint to stream WhatsApp/Meta media files to the frontend
+    with strict SSRF defense, domain whitelisting, and Content-Type enforcement.
+    """
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         media_id = request.query_params.get('media_id')
         media_url = request.query_params.get('media_url')
         
         client = get_tenant_client(request)
-        if not client:
-            client = Client.objects.filter(whatsapp_access_token__isnull=False).exclude(whatsapp_access_token='').first()
+        token = getattr(client, 'whatsapp_access_token', None) if client else None
 
-        token = client.whatsapp_access_token if client else None
-        if media_id and token:
+        # Resolve media_id via Meta Graph API if provided
+        if media_id:
+            # Validate media_id is alphanumeric to prevent path injection
+            if not str(media_id).isalnum():
+                return Response({"error": "Invalid media ID format."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not token:
+                return Response({"error": "WhatsApp credentials not configured for this client."}, status=status.HTTP_403_FORBIDDEN)
+
             try:
+                graph_url = f"https://graph.facebook.com/v18.0/{media_id}"
                 url_res = requests.get(
-                    f"https://graph.facebook.com/v18.0/{media_id}",
+                    graph_url,
                     headers={"Authorization": f"Bearer {token}"},
                     timeout=10
                 )
                 if url_res.status_code == 200:
                     media_url = url_res.json().get('url')
+                else:
+                    return Response({"error": "Failed to resolve media from Meta."}, status=url_res.status_code)
             except Exception as e:
-                logger.error("Failed to get media URL for %s: %s", media_id, e)
+                logger.error("Failed to query Meta Graph API for media_id %s: %s", media_id, e)
+                return Response({"error": "Media lookup failed."}, status=status.HTTP_502_BAD_GATEWAY)
 
-        if media_url:
-            try:
-                headers = {"Authorization": f"Bearer {token}"} if (token and "facebook.com" in media_url) else {}
-                file_res = requests.get(media_url, headers=headers, timeout=30)
-                if file_res.status_code == 200:
-                    content_type = file_res.headers.get('Content-Type', 'application/octet-stream')
-                    from django.http import HttpResponse
-                    response = HttpResponse(file_res.content, content_type=content_type)
-                    filename = request.query_params.get('filename')
-                    if filename:
-                        response['Content-Disposition'] = f'inline; filename="{filename}"'
-                    return response
-            except Exception as e:
-                logger.error("Failed downloading media from %s: %s", media_url, e)
+        if not media_url:
+            return Response({"error": "media_id or media_url is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"error": "Media file not found or download failed."}, status=404)
+        # Enforce strict SSRF validation
+        if not is_safe_media_url(media_url):
+            logger.warning("Blocked potential SSRF attempt for URL: %s by user: %s", media_url, request.user.username if request.user else "Anonymous")
+            return Response({"error": "Access to the requested URL is forbidden."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            # Only attach Bearer token if connecting to verified facebook.com endpoints
+            parsed_host = (urllib.parse.urlparse(media_url).hostname or '').lower()
+            attach_auth = bool(token and (parsed_host == 'graph.facebook.com' or parsed_host.endswith('.facebook.com')))
+            headers = {"Authorization": f"Bearer {token}"} if attach_auth else {}
+
+            file_res = requests.get(media_url, headers=headers, timeout=25, stream=True)
+            if file_res.status_code == 200:
+                content_type = file_res.headers.get('Content-Type', 'application/octet-stream')
+                response = HttpResponse(file_res.content, content_type=content_type)
+                
+                # Security header to prevent MIME sniffing
+                response['X-Content-Type-Options'] = 'nosniff'
+                
+                filename = request.query_params.get('filename')
+                if filename:
+                    # Sanitize filename
+                    clean_filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
+                    response['Content-Disposition'] = f'inline; filename="{clean_filename}"'
+                return response
+            else:
+                return Response({"error": "Failed to download upstream media."}, status=file_res.status_code)
+        except Exception as e:
+            logger.error("Failed downloading media from %s: %s", media_url, e)
+            return Response({"error": "Media download failed."}, status=status.HTTP_502_BAD_GATEWAY)
 
 class AuditLogMixin:
     def get_module_name(self):
