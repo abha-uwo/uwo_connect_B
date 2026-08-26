@@ -26,6 +26,7 @@ from ..models import (
     WorkApproval, TeamChannel, TeamChatMessage, Attendance, LeaveRequest
 )
 from django.utils import timezone
+from django.db.models import Q
 import datetime
 
 class TaskViewSet(viewsets.ModelViewSet):
@@ -142,11 +143,30 @@ class WorkReportView(APIView):
             return Response([], status=200)
         
         qs = WorkReport.objects.filter(client=request.user.client)
-        # If regular employee and NOT the account owner (CLIENT), only show their reports
-        if request.user.role != 'CLIENT' and request.user.enterprise_role in ['EMPLOYEE', 'INTERN']:
-            qs = qs.filter(employee=request.user)
+        
+        is_client = (
+            request.user.role == 'CLIENT' or 
+            request.user.enterprise_role == 'CLIENT' or 
+            getattr(request.user, 'is_staff', False) or 
+            getattr(request.user, 'is_superuser', False)
+        )
+        
+        # If agent/employee, show reports of teammates in shared projects + their own
+        if not is_client:
+            user_projects = Project.objects.filter(client=request.user.client).filter(Q(members=request.user) | Q(owner=request.user))
+            team_member_ids = set()
+            for p in user_projects:
+                team_member_ids.update(p.members.values_list('id', flat=True))
+                if p.owner:
+                    team_member_ids.add(p.owner.id)
+            team_member_ids.add(request.user.id)
+            qs = qs.filter(employee_id__in=team_member_ids)
             
-        serializer = WorkReportSerializer(qs.order_by('-report_date'), many=True)
+        date_param = request.query_params.get('date')
+        if date_param:
+            qs = qs.filter(report_date=date_param)
+
+        serializer = WorkReportSerializer(qs.order_by('-report_date', '-created_at'), many=True)
         return Response(serializer.data)
 
     def post(self, request):
@@ -223,26 +243,68 @@ class TeamChannelView(APIView):
         if not getattr(request.user, 'client', None):
             return Response([], status=200)
             
-        channels = TeamChannel.objects.filter(client=request.user.client)
-        if not channels.exists():
-            # Seed default channels if none exist
-            general = TeamChannel.objects.create(
-                client=request.user.client,
+        client = request.user.client
+        is_client_admin = request.user.role == 'CLIENT' or request.user.enterprise_role == 'CLIENT' or request.user.is_staff
+
+        # Ensure default workspace channels exist
+        if not TeamChannel.objects.filter(client=client, name='general').exists():
+            TeamChannel.objects.create(
+                client=client,
                 name='general',
                 description='Company wide discussions & updates',
                 channel_type='PUBLIC',
                 created_by=request.user
             )
-            announcements = TeamChannel.objects.create(
-                client=request.user.client,
+        if not TeamChannel.objects.filter(client=client, name='announcements').exists():
+            TeamChannel.objects.create(
+                client=client,
                 name='announcements',
                 description='Official management announcements',
                 channel_type='PUBLIC',
                 created_by=request.user
             )
-            channels = [general, announcements]
+
+        # Sync active projects with project channels
+        active_projects = list(Project.objects.filter(client=client))
+        active_project_slugs = {}
+        for p in active_projects:
+            slug = f"proj-{p.name.strip().lower().replace(' ', '-')}"
+            active_project_slugs[slug] = p
+            ch, created = TeamChannel.objects.get_or_create(
+                client=client,
+                name=slug,
+                defaults={
+                    'description': f"Official discussion channel for {p.name}",
+                    'channel_type': 'PUBLIC',
+                    'created_by': request.user
+                }
+            )
+            if created or not ch.members.exists():
+                ch.members.set(p.members.all())
+
+        # Clean up orphan project channels whose project was deleted
+        for ch in TeamChannel.objects.filter(client=client, name__startswith='proj-'):
+            if ch.name not in active_project_slugs:
+                ch.delete()
+
+        # Fetch channels
+        all_channels = TeamChannel.objects.filter(client=client)
+
+        if is_client_admin:
+            visible_channels = all_channels
+        else:
+            # Employee / Agent: Show general channels + projects where user is member/owner
+            user_projects = [p for p in active_projects if request.user in p.members.all() or p.owner == request.user]
+            user_proj_slugs = set(f"proj-{p.name.strip().lower().replace(' ', '-')}" for p in user_projects)
             
-        serializer = TeamChannelSerializer(channels, many=True)
+            visible_channels = []
+            for ch in all_channels:
+                if not ch.name.startswith('proj-'):
+                    visible_channels.append(ch)
+                elif ch.name in user_proj_slugs:
+                    visible_channels.append(ch)
+            
+        serializer = TeamChannelSerializer(visible_channels, many=True)
         return Response(serializer.data)
 
     def post(self, request):
@@ -271,7 +333,18 @@ class TeamChatMessageView(APIView):
         if not channel_id:
             return Response([], status=200)
             
-        messages = TeamChatMessage.objects.filter(channel__id=channel_id).order_by('created_at')[:100]
+        from bson import ObjectId
+        from django.db.models import Q
+        try:
+            ch_oid = ObjectId(channel_id) if ObjectId.is_valid(channel_id) else None
+        except Exception:
+            ch_oid = None
+
+        if ch_oid:
+            messages = TeamChatMessage.objects.filter(Q(channel_id=channel_id) | Q(channel_id=ch_oid)).order_by('created_at')[:100]
+        else:
+            messages = TeamChatMessage.objects.filter(channel_id=channel_id).order_by('created_at')[:100]
+            
         serializer = TeamChatMessageSerializer(messages, many=True)
         return Response(serializer.data)
 
@@ -281,9 +354,20 @@ class TeamChatMessageView(APIView):
         if not channel_id or not text:
             return Response({'error': 'Channel ID and text are required'}, status=400)
             
+        from bson import ObjectId
+        from django.db.models import Q
         try:
-            channel = TeamChannel.objects.get(id=channel_id, client=request.user.client)
-        except TeamChannel.DoesNotExist:
+            ch_oid = ObjectId(channel_id) if ObjectId.is_valid(channel_id) else None
+        except Exception:
+            ch_oid = None
+
+        channel = None
+        if ch_oid:
+            channel = TeamChannel.objects.filter(Q(id=channel_id) | Q(id=ch_oid)).first()
+        else:
+            channel = TeamChannel.objects.filter(id=channel_id).first()
+
+        if not channel:
             return Response({'error': 'Channel not found'}, status=404)
             
         message = TeamChatMessage.objects.create(
@@ -630,6 +714,15 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         project = serializer.save(client=user.client, owner=user)
+        members_data = self.request.data.get('members', [])
+        if members_data:
+            for m_id in members_data:
+                try:
+                    member_user = User.objects.filter(id=m_id).first()
+                    if member_user:
+                        project.members.add(member_user)
+                except Exception:
+                    pass
         # Create an associated project channel automatically
         channel_name = f"proj-{project.name.lower().replace(' ', '-')[:25]}"
         TeamChannel.objects.get_or_create(
@@ -641,6 +734,19 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 'created_by': user
             }
         )
+
+    def perform_update(self, serializer):
+        project = serializer.save()
+        if 'members' in self.request.data:
+            members_data = self.request.data.get('members', [])
+            project.members.clear()
+            for m_id in members_data:
+                try:
+                    member_user = User.objects.filter(id=m_id).first()
+                    if member_user:
+                        project.members.add(member_user)
+                except Exception:
+                    pass
 
     def destroy(self, request, *args, **kwargs):
         pk = kwargs.get('pk')

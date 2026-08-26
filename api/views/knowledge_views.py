@@ -168,17 +168,42 @@ class KnowledgeBaseView(APIView):
             "message": f"Document uploaded! {len(chunks)} chunks created, {embedded_count} embedded."
         }, status=201)
 
-    def delete(self, request, pk):
+    def delete(self, request, pk=None):
+        target_id = pk or request.query_params.get('id') or request.data.get('id')
+        if not target_id:
+            return Response({"message": "Document ID is required"}, status=400)
+
         client = get_tenant_client(request)
-        if not client:
-            return Response({"message": "No client associated"}, status=400)
+
         try:
-            doc = KnowledgeRepository.get_document(id=pk, client=client)
-            # Chunks auto-delete via CASCADE
+            if client:
+                doc = KnowledgeDocument.objects.filter(id=target_id, client=client).first()
+            elif request.user.role == 'ADMIN' or getattr(request.user, 'is_staff', False) or getattr(request.user, 'is_superuser', False):
+                doc = KnowledgeDocument.objects.filter(id=target_id).first()
+            else:
+                doc = None
+
+            if not doc:
+                return Response({"message": "Document not found or access denied"}, status=404)
+
+            doc_title = doc.title
+
+            # Clean up physical file if stored on disk
+            if doc.file:
+                try:
+                    if os.path.isfile(doc.file.path):
+                        os.remove(doc.file.path)
+                except Exception as e:
+                    print(f"Error removing physical file: {e}")
+
+            # Delete chunks explicitly and document
+            KnowledgeChunk.objects.filter(document=doc).delete()
             doc.delete()
-            return Response({"message": "Document and all chunks deleted successfully"}, status=200)
-        except KnowledgeDocument.DoesNotExist:
-            return Response({"message": "Document not found"}, status=404)
+
+            return Response({"message": f"Document '{doc_title}' and all vector chunks deleted successfully."}, status=200)
+        except Exception as e:
+            print(f"Delete knowledge document error: {e}")
+            return Response({"message": f"Failed to delete document: {str(e)}"}, status=500)
 
 
 def root_view(request):

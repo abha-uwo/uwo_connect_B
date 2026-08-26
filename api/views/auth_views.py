@@ -184,16 +184,29 @@ class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        print("====== PROFILE VIEW HIT ======")
         if not request.user.client:
             return Response({"message": "No client associated"}, status=404)
         serializer = ClientSerializer(request.user.client)
+        user_serializer = UserSerializer(request.user)
+        user_data = user_serializer.data
+
+        client_data = dict(serializer.data)
+        try:
+            from api.utils.channel_permissions import get_user_effective_connectors
+            effective_map = get_user_effective_connectors(request.user, client=request.user.client)
+            global_map = {k: v['global_active'] for k, v in effective_map.items()}
+            client_data['global_connectors'] = global_map
+            client_data['effective_connectors'] = effective_map
+        except Exception as e:
+            global_map = {}
+            effective_map = {}
+
         return Response({
-            "client": serializer.data,
-            "user": {
-                "name": f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username,
-                "email": request.user.email,
-            }
+            "client": client_data,
+            "user": user_data,
+            "global_connectors": global_map,
+            "effective_connectors": effective_map,
+            **user_data
         })
 
     def patch(self, request):

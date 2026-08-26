@@ -6,8 +6,14 @@ class KnowledgeRepository:
         return KnowledgeDocument.objects.filter(**kwargs)
         
     @staticmethod
-    def get_document(id):
-        return KnowledgeDocument.objects.filter(id=id).first()
+    def get_document(id, client=None):
+        try:
+            qs = KnowledgeDocument.objects.filter(id=id)
+            if client:
+                qs = qs.filter(client=client)
+            return qs.first()
+        except Exception:
+            return None
 
     @staticmethod
     def filter_chunks(**kwargs):

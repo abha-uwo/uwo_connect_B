@@ -37,13 +37,16 @@ from .views import (
     SuperAdminClientActionView, SuperAdminTeamListView, SuperAdminChannelsListView, SuperAdminTeamSummaryView,
     SuperAdminMessagesListView, SuperAdminSalesListView, SuperAdminQuotationsListView,
     SuperAdminProposalsListView, SuperAdminInvoicesListView, SuperAdminReportsListView,
+    SuperAdminProductsListView,
     SuperAdminGlobalSearchView, SuperAdminProjectsListView, SuperAdminProjectDetailView,
     SuperAdminProjectAssignMembersView, SuperAdminAllTeamsView, SuperAdminTeamChannelDetailView,
     SuperAdminTeamChannelAssignMembersView, SuperAdminMemberDetailView, SuperAdminTeamAnalyticsView,
     ClientIntelligenceStatsView, ClientIntelligenceListView, ClientIntelligenceDetailView,
     ClientIntelligenceActionView, ClientIntelligenceExportView,
+    AdminGlobalConnectorsView,
     AdminChannelAccessMatrixView, AdminClientChannelAccessDetailView,
-    AdminBulkChannelAccessView, AdminChannelAuditLogView
+    AdminBulkChannelAccessView, AdminChannelAuditLogsView, AdminChannelAuditLogView,
+    EffectiveConnectorsView, GlobalConnectorsStatusView
 )
 from api.views.zoho_views import ZohoConnectView, ZohoCallbackView, ZohoDisconnectView, ZohoTestLeadView
 
@@ -194,6 +197,8 @@ urlpatterns = [
     path('admin/all-invoices/', SuperAdminInvoicesListView.as_view()),
     path('admin/all-reports', SuperAdminReportsListView.as_view(), name='super-admin-all-reports'),
     path('admin/all-reports/', SuperAdminReportsListView.as_view()),
+    path('admin/all-products', SuperAdminProductsListView.as_view(), name='super-admin-all-products'),
+    path('admin/all-products/', SuperAdminProductsListView.as_view()),
     path('admin/global-search', SuperAdminGlobalSearchView.as_view(), name='super-admin-global-search'),
     path('admin/global-search/', SuperAdminGlobalSearchView.as_view()),
     path('admin/automations', AdminAutomationsView.as_view(), name='admin-automations'),
@@ -207,7 +212,9 @@ urlpatterns = [
     path('webhook/facebook-instagram', FacebookInstagramWebhookView.as_view(), name='facebook-instagram-webhook'),
     # RAG Knowledge Base
     path('knowledge/', KnowledgeBaseView.as_view(), name='knowledge-base'),
+    path('knowledge', KnowledgeBaseView.as_view()),
     path('knowledge/<str:pk>/', KnowledgeBaseView.as_view(), name='knowledge-base-detail'),
+    path('knowledge/<str:pk>', KnowledgeBaseView.as_view()),
     path('admin/impersonate', AdminImpersonateView.as_view(), name='admin-impersonate'),
     path('admin/impersonate/', AdminImpersonateView.as_view()),
     # Razorpay / Cashfree Payments
@@ -431,13 +438,39 @@ urlpatterns = [
     path('public/invoice/<str:token>/pdf', PublicInvoicePDFView.as_view()),
     path('public/invoice/<str:token>/pdf/', PublicInvoicePDFView.as_view()),
 
-    # Admin Channel Feature Lock & Access Control Endpoints
-    path('admin/channel-access/', AdminChannelAccessMatrixView.as_view(), name='admin-channel-access-matrix'),
-    path('admin/channel-access/matrix/', AdminChannelAccessMatrixView.as_view()),
-    path('admin/channel-access/client/<str:client_id>/', AdminClientChannelAccessDetailView.as_view(), name='admin-channel-access-client'),
+    # Channel & Connector Access Governance Endpoints
+    path('admin/channel-access/global/', AdminGlobalConnectorsView.as_view(), name='admin-channel-access-global'),
+    path('admin/channel-access/global', AdminGlobalConnectorsView.as_view()),
+    path('admin/channel-access/global/<str:connector_key>/', AdminGlobalConnectorsView.as_view(), name='admin-channel-access-global-toggle'),
+    path('admin/channel-access/global/<str:connector_key>', AdminGlobalConnectorsView.as_view()),
+    path('admin/channel-access/matrix/', AdminChannelAccessMatrixView.as_view(), name='admin-channel-access-matrix'),
+    path('admin/channel-access/matrix', AdminChannelAccessMatrixView.as_view()),
+    path('admin/channel-access/client/<str:client_id>/', AdminClientChannelAccessDetailView.as_view(), name='admin-channel-access-client-detail'),
     path('admin/channel-access/client/<str:client_id>', AdminClientChannelAccessDetailView.as_view()),
     path('admin/channel-access/bulk/', AdminBulkChannelAccessView.as_view(), name='admin-channel-access-bulk'),
     path('admin/channel-access/bulk', AdminBulkChannelAccessView.as_view()),
-    path('admin/channel-access/audit-logs/', AdminChannelAuditLogView.as_view(), name='admin-channel-access-audit-logs'),
-    path('admin/channel-access/audit-logs', AdminChannelAuditLogView.as_view()),
+    path('admin/channel-access/audit-logs/', AdminChannelAuditLogsView.as_view(), name='admin-channel-access-audit-logs'),
+    path('admin/channel-access/audit-logs', AdminChannelAuditLogsView.as_view()),
+    path('connectors/effective/', EffectiveConnectorsView.as_view(), name='connectors-effective'),
+    path('connectors/effective', EffectiveConnectorsView.as_view()),
+    path('connectors/global-status/', GlobalConnectorsStatusView.as_view(), name='connectors-global-status'),
+    path('connectors/global-status', GlobalConnectorsStatusView.as_view()),
+
+    # Admin Projects & Teams Endpoints
+    path('admin/all-projects/', SuperAdminProjectsListView.as_view(), name='admin-all-projects'),
+    path('admin/all-projects', SuperAdminProjectsListView.as_view()),
+    path('admin/all-projects/<str:project_id>/', SuperAdminProjectDetailView.as_view(), name='admin-project-detail'),
+    path('admin/all-projects/<str:project_id>', SuperAdminProjectDetailView.as_view()),
+    path('admin/all-projects/<str:project_id>/assign/', SuperAdminProjectAssignMembersView.as_view(), name='admin-project-assign'),
+    path('admin/all-projects/<str:project_id>/assign', SuperAdminProjectAssignMembersView.as_view()),
+    path('admin/all-projects/<str:project_id>/members/', SuperAdminProjectAssignMembersView.as_view(), name='admin-project-members'),
+    path('admin/all-projects/<str:project_id>/members', SuperAdminProjectAssignMembersView.as_view()),
+    path('admin/all-projects/<str:project_id>/members/<str:member_id>/', SuperAdminProjectAssignMembersView.as_view(), name='admin-project-remove-member'),
+    path('admin/all-projects/<str:project_id>/members/<str:member_id>', SuperAdminProjectAssignMembersView.as_view()),
+    path('admin/all-team/', SuperAdminTeamListView.as_view(), name='admin-all-team'),
+    path('admin/all-team', SuperAdminTeamListView.as_view()),
+    path('admin/team-analytics/', SuperAdminTeamAnalyticsView.as_view(), name='admin-team-analytics'),
+    path('admin/team-analytics', SuperAdminTeamAnalyticsView.as_view()),
+    path('admin/teams-channels/', SuperAdminAllTeamsView.as_view(), name='admin-teams-channels'),
+    path('admin/teams-channels', SuperAdminAllTeamsView.as_view()),
 ]

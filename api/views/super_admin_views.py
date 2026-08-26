@@ -1924,7 +1924,7 @@ class SuperAdminTeamListView(APIView):
         role_filter = request.query_params.get('role')
         status_filter = request.query_params.get('status')
 
-        users_qs = User.objects.filter(role__in=['CLIENT', 'AGENT']).select_related('client')
+        users_qs = User.objects.select_related('client')
 
         if client_id and client_id != 'ALL':
             users_qs = users_qs.filter(client_id=client_id)
@@ -1941,7 +1941,7 @@ class SuperAdminTeamListView(APIView):
                 Q(client__business_name__icontains=search)
             )
 
-        users = list(users_qs.order_by('-date_joined')[:60])
+        users = list(users_qs.order_by('-date_joined')[:300])
         clients_map = {str(c.id): c.business_name for c in Client.objects.all()}
 
         team_data = []
@@ -2020,57 +2020,191 @@ class SuperAdminChannelsListView(APIView):
 
 class SuperAdminMessagesListView(APIView):
     """
-    Platform-wide Live Message & Chat Explorer.
+    Platform-wide Live Message & Chat Explorer with Client & Channel Aggregations.
     """
     permission_classes = [IsSuperAdminUser]
 
     def get(self, request):
-        search = request.query_params.get('search', '').strip()
-        client_id = request.query_params.get('client_id')
-        channel = request.query_params.get('channel')
-        msg_type = request.query_params.get('type')
+        search = request.query_params.get('search', '').strip().lower()
+        client_id_filter = request.query_params.get('client_id')
+        channel_filter = request.query_params.get('channel')
+        msg_type_filter = request.query_params.get('type')
         sender_filter = request.query_params.get('sender')
-        limit = int(request.query_params.get('limit', 100))
+        limit = int(request.query_params.get('limit', 200))
 
-        msgs_qs = Message.objects.select_related('client', 'sender_user').order_by('-created_at')
+        # 1. Fetch Clients
+        clients_qs = Client.objects.all().order_by('business_name')
+        if client_id_filter and client_id_filter != 'ALL':
+            clients_qs = clients_qs.filter(id=client_id_filter)
+        clients_list = list(clients_qs)
+        clients_map = {str(c.id): c for c in clients_list}
 
-        if client_id:
-            msgs_qs = msgs_qs.filter(client_id=client_id)
-        if channel and channel != 'ALL':
-            msgs_qs = msgs_qs.filter(channel=channel.upper())
-        if msg_type and msg_type != 'ALL':
-            msgs_qs = msgs_qs.filter(message_type=msg_type.upper())
-        if sender_filter == 'BOT':
-            msgs_qs = msgs_qs.filter(sender_user__isnull=True)
-        elif sender_filter == 'HUMAN':
-            msgs_qs = msgs_qs.filter(sender_user__isnull=False)
+        # 2. Fetch Chat Messages (WhatsApp, Instagram, Facebook, Gmail etc.)
+        try:
+            msgs_qs = Message.objects.all()
+            if client_id_filter and client_id_filter != 'ALL':
+                msgs_qs = msgs_qs.filter(client_id=client_id_filter)
+            if channel_filter and channel_filter != 'ALL':
+                msgs_qs = msgs_qs.filter(channel=channel_filter.upper())
+            if msg_type_filter and msg_type_filter != 'ALL':
+                msgs_qs = msgs_qs.filter(message_type=msg_type_filter.upper())
+            if sender_filter == 'BOT':
+                msgs_qs = msgs_qs.filter(sender_user__isnull=True)
+            elif sender_filter == 'HUMAN':
+                msgs_qs = msgs_qs.filter(sender_user__isnull=False)
 
-        if search:
-            msgs_qs = msgs_qs.filter(
-                Q(from_address__icontains=search) |
-                Q(to_address__icontains=search) |
-                Q(body__icontains=search) |
-                Q(client__business_name__icontains=search)
-            )
+            raw_messages = list(msgs_qs.order_by('-id')[:limit])
+        except Exception as e:
+            print(f"Fallback querying Message objects in SuperAdminMessagesListView: {e}")
+            try:
+                raw_messages = list(Message.objects.all()[:limit])
+            except Exception:
+                raw_messages = []
 
+        # 3. Fetch Email Messages (if Gmail / Email channel is requested or ALL)
+        email_messages_list = []
+        if not channel_filter or channel_filter in ['ALL', 'GMAIL', 'EMAIL']:
+            try:
+                emails_qs = EmailMessage.objects.all()
+                if client_id_filter and client_id_filter != 'ALL':
+                    emails_qs = emails_qs.filter(client_id=client_id_filter)
+                if msg_type_filter == 'INCOMING':
+                    emails_qs = emails_qs.filter(folder='inbox')
+                elif msg_type_filter == 'OUTGOING':
+                    emails_qs = emails_qs.filter(folder__in=['sent', 'outbox'])
+                
+                emails_raw = list(emails_qs.order_by('-id')[:50])
+                for em in emails_raw:
+                    recipients = ', '.join(em.to_recipients) if isinstance(em.to_recipients, list) else str(em.to_recipients or '')
+                    c_obj = clients_map.get(str(em.client_id))
+                    email_messages_list.append({
+                        "id": str(em.id),
+                        "client_id": str(em.client_id) if em.client_id else None,
+                        "client_name": c_obj.business_name if c_obj else 'Platform',
+                        "from_address": em.sender_email or em.sender_name or 'Email Sender',
+                        "to_address": recipients or 'Recipient',
+                        "body": f"[{em.subject}] {em.body_text[:200]}" if em.body_text else em.subject,
+                        "subject": em.subject,
+                        "channel": "GMAIL",
+                        "message_type": "INCOMING" if em.folder == 'inbox' else "OUTGOING",
+                        "status": (em.status or 'DELIVERED').upper(),
+                        "is_bot": False,
+                        "sender_name": em.sender_name or em.sender_email or 'Gmail User',
+                        "created_at": em.created_at.isoformat() if em.created_at else timezone.now().isoformat()
+                    })
+            except Exception as e:
+                print(f"Error fetching EmailMessages in SuperAdminMessagesListView: {e}")
+
+        # Combine chat messages & email messages
         messages_data = []
-        for msg in msgs_qs[:limit]:
+        for msg in raw_messages:
+            cid = str(msg.client_id) if getattr(msg, 'client_id', None) else None
+            c_obj = clients_map.get(cid) if cid else None
+            cname = c_obj.business_name if c_obj else 'Unknown Client'
             messages_data.append({
                 "id": str(msg.id),
-                "client_id": str(msg.client.id) if msg.client else None,
-                "client_name": msg.client.business_name if msg.client else 'Unknown',
-                "from_address": msg.from_address,
-                "to_address": msg.to_address,
-                "body": msg.body,
-                "channel": msg.channel,
-                "message_type": msg.message_type,
-                "status": msg.status,
-                "is_bot": msg.sender_user is None,
-                "sender_name": "AI Bot" if msg.sender_user is None else (msg.sender_name or msg.sender_user.username),
-                "created_at": msg.created_at.isoformat()
+                "client_id": cid,
+                "client_name": cname,
+                "from_address": msg.from_address or 'Unknown',
+                "to_address": msg.to_address or 'Unknown',
+                "body": msg.body or '',
+                "channel": (msg.channel or 'WHATSAPP').upper(),
+                "message_type": msg.message_type or 'INCOMING',
+                "status": (msg.status or 'SENT').upper(),
+                "is_bot": getattr(msg, 'sender_user_id', None) is None,
+                "sender_name": "AI Bot" if getattr(msg, 'sender_user_id', None) is None else (msg.sender_name or 'Team Member'),
+                "created_at": msg.created_at.isoformat() if getattr(msg, 'created_at', None) else timezone.now().isoformat()
             })
 
-        return Response(messages_data)
+        # Append emails
+        messages_data.extend(email_messages_list)
+
+        # Sort all messages by timestamp descending
+        messages_data.sort(key=lambda m: m.get('created_at', ''), reverse=True)
+
+        # 4. Search Filter (if applied)
+        if search:
+            messages_data = [
+                m for m in messages_data if (
+                    search in (m.get('body') or '').lower() or
+                    search in (m.get('from_address') or '').lower() or
+                    search in (m.get('to_address') or '').lower() or
+                    search in (m.get('client_name') or '').lower() or
+                    search in (m.get('sender_name') or '').lower() or
+                    search in (m.get('channel') or '').lower()
+                )
+            ]
+
+        # 5. Build Per-Client Hierarchy & Counts
+        clients_breakdown = []
+        total_whatsapp = 0
+        total_instagram = 0
+        total_facebook = 0
+        total_gmail = 0
+
+        # Group messages by client_id in memory
+        client_msgs_map = {}
+        for m in messages_data:
+            cid = m.get('client_id') or 'unknown'
+            client_msgs_map.setdefault(cid, []).append(m)
+
+            ch = m.get('channel', '').upper()
+            if ch == 'WHATSAPP':
+                total_whatsapp += 1
+            elif ch == 'INSTAGRAM':
+                total_instagram += 1
+            elif ch == 'FACEBOOK':
+                total_facebook += 1
+            elif ch in ['GMAIL', 'EMAIL']:
+                total_gmail += 1
+
+        for c in clients_list:
+            cid_str = str(c.id)
+            c_msgs = client_msgs_map.get(cid_str, [])
+
+            wa_msgs = [m for m in c_msgs if m.get('channel') == 'WHATSAPP']
+            ig_msgs = [m for m in c_msgs if m.get('channel') == 'INSTAGRAM']
+            fb_msgs = [m for m in c_msgs if m.get('channel') == 'FACEBOOK']
+            gm_msgs = [m for m in c_msgs if m.get('channel') in ['GMAIL', 'EMAIL']]
+
+            clients_breakdown.append({
+                "client_id": cid_str,
+                "client_name": c.business_name,
+                "status": c.status,
+                "plan": c.plan,
+                "phone_number": c.phone_number or '',
+                "total_messages": len(c_msgs),
+                "channel_counts": {
+                    "WHATSAPP": len(wa_msgs),
+                    "INSTAGRAM": len(ig_msgs),
+                    "FACEBOOK": len(fb_msgs),
+                    "GMAIL": len(gm_msgs)
+                },
+                "messages": c_msgs,
+                "whatsapp_messages": wa_msgs,
+                "instagram_messages": ig_msgs,
+                "facebook_messages": fb_msgs,
+                "gmail_messages": gm_msgs
+            })
+
+        # Sort clients by total_messages descending so active ones are on top
+        clients_breakdown.sort(key=lambda c: c['total_messages'], reverse=True)
+
+        summary = {
+            "total_messages": len(messages_data),
+            "total_whatsapp": total_whatsapp,
+            "total_instagram": total_instagram,
+            "total_facebook": total_facebook,
+            "total_gmail": total_gmail,
+            "total_clients": len(clients_list),
+            "active_clients_with_messages": sum(1 for c in clients_breakdown if c['total_messages'] > 0)
+        }
+
+        return Response({
+            "summary": summary,
+            "clients": clients_breakdown,
+            "messages": messages_data
+        })
 
 
 class SuperAdminSalesListView(APIView):
@@ -2349,6 +2483,82 @@ class SuperAdminTeamSummaryView(APIView):
             })
 
         return Response(summary_data)
+
+
+class SuperAdminProductsListView(APIView):
+    """
+    Returns client-wise breakdown of products catalog and summary metrics.
+    """
+    permission_classes = [IsSuperAdminUser]
+
+    def get(self, request):
+        clients = Client.objects.all().order_by('business_name')
+        all_products = Product.objects.all().order_by('-id')
+        
+        # Group products by client
+        products_by_client = {}
+        for p in all_products:
+            c_id = str(p.client_id)
+            if c_id not in products_by_client:
+                products_by_client[c_id] = []
+            products_by_client[c_id].append({
+                "id": str(p.id),
+                "name": p.name,
+                "price": float(p.price or 0.0),
+                "discount_price": float(p.discount_price) if p.discount_price is not None else None,
+                "category": p.category,
+                "product_type": p.product_type,
+                "sku": p.sku or '',
+                "brand": p.brand or '',
+                "currency": p.currency or 'USD',
+                "in_stock": p.in_stock,
+                "stock_quantity": p.stock_quantity,
+                "availability_status": p.availability_status,
+                "description": p.description or '',
+                "image_url": p.image_url or '',
+                "tags": p.tags or []
+            })
+
+        client_list = []
+        total_products_count = 0
+        total_in_stock = 0
+        total_out_of_stock = 0
+
+        for client in clients:
+            c_id = str(client.id)
+            c_products = products_by_client.get(c_id, [])
+            p_count = len(c_products)
+            in_stock_cnt = sum(1 for p in c_products if p['in_stock'])
+            out_stock_cnt = p_count - in_stock_cnt
+            categories = list({p['category'] for p in c_products if p.get('category')})
+
+            total_products_count += p_count
+            total_in_stock += in_stock_cnt
+            total_out_of_stock += out_stock_cnt
+
+            client_list.append({
+                "client_id": c_id,
+                "client_name": client.business_name or client.name,
+                "company_name": client.business_name or client.name,
+                "status": client.status,
+                "plan": client.plan,
+                "total_products": p_count,
+                "active_products": in_stock_cnt,
+                "inactive_products": out_stock_cnt,
+                "categories": categories,
+                "products": c_products
+            })
+
+        return Response({
+            "kpis": {
+                "totalProducts": total_products_count,
+                "totalClientsWithProducts": sum(1 for c in client_list if c['total_products'] > 0),
+                "inStockProducts": total_in_stock,
+                "outOfStockProducts": total_out_of_stock,
+                "totalClients": len(clients)
+            },
+            "clients": client_list
+        })
 
 
 class SuperAdminTeamAnalyticsView(APIView):
@@ -2778,12 +2988,122 @@ class SuperAdminProjectAssignMembersView(APIView):
 
         client_name = project.client.business_name if project.client else 'Platform'
 
-        if action == 'add' or (single_member_id and action != 'remove'):
+        # Handle Create & Add New Member directly
+        if action in ['create_and_add', 'create', 'add_new'] or (request.data.get('email') and not single_member_id):
+            email = (request.data.get('email') or '').strip().lower()
+            name = (request.data.get('name') or '').strip()
+            first_name = (request.data.get('first_name') or '').strip()
+            last_name = (request.data.get('last_name') or '').strip()
+            if name and not (first_name or last_name):
+                parts = name.split(' ', 1)
+                first_name = parts[0]
+                last_name = parts[1] if len(parts) > 1 else ''
+
+            username = (request.data.get('username') or email or '').strip().lower()
+            password = request.data.get('password') or 'UwoConnect@123'
+            role = request.data.get('role') or 'AGENT'
+            enterprise_role = request.data.get('enterprise_role') or 'EMPLOYEE'
+            department = request.data.get('department') or 'General'
+            designation = request.data.get('designation') or 'Team Member'
+            target_client_id = request.data.get('client_id')
+
+            if not email:
+                return Response({"error": "Email is required to create and add member."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Determine workspace client
+            user_client = project.client
+            if target_client_id:
+                try:
+                    user_client = Client.objects.get(id=target_client_id)
+                except Client.DoesNotExist:
+                    pass
+
+            # Check if user already exists
+            user = User.objects.filter(Q(email__iexact=email) | Q(username__iexact=username)).first()
+            created = False
+            if not user:
+                base_username = username.split('@')[0] if '@' in username else username
+                final_username = base_username
+                counter = 1
+                while User.objects.filter(username=final_username).exists():
+                    final_username = f"{base_username}{counter}"
+                    counter += 1
+
+                user = User.objects.create_user(
+                    username=final_username,
+                    email=email,
+                    password=password,
+                    first_name=first_name,
+                    last_name=last_name,
+                    role=role,
+                    enterprise_role=enterprise_role,
+                    department=department,
+                    designation=designation,
+                    status='APPROVED',
+                    client=user_client
+                )
+                created = True
+            else:
+                # If existing user has no client and project has client, associate them
+                if not user.client and user_client:
+                    user.client = user_client
+                    user.save(update_fields=['client'])
+
+            project.members.add(user)
+            log_super_admin_action(
+                request, 
+                client_name, 
+                'PROJECTS', 
+                'CREATE_AND_ADD_PROJECT_MEMBER' if created else 'ADD_PROJECT_MEMBER', 
+                after_val=f"{'Created and added' if created else 'Added'} {user.username} to {project.name}"
+            )
+
+            user_data = {
+                "id": str(user.id),
+                "name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                "username": user.username,
+                "email": user.email,
+                "role": user.enterprise_role or user.role,
+                "enterprise_role": user.enterprise_role,
+                "designation": user.designation,
+                "department": user.department,
+                "status": user.status,
+                "client_id": str(user.client_id) if user.client_id else None,
+                "client_name": user.client.business_name if user.client else 'Platform',
+                "is_online": getattr(user, 'is_online', False),
+            }
+
+            return Response({
+                "message": f"Member '{user_data['name']}' {'created and ' if created else ''}assigned to project '{project.name}' successfully.",
+                "created": created,
+                "member": user_data,
+                "members_count": project.members.count()
+            }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+        elif action == 'add' or (single_member_id and action != 'remove'):
             try:
                 user = User.objects.get(id=single_member_id)
                 project.members.add(user)
                 log_super_admin_action(request, client_name, 'PROJECTS', 'ADD_PROJECT_MEMBER', after_val=f"Added {user.username} to {project.name}")
-                return Response({"message": f"Added '{user.username}' to project '{project.name}'.", "members_count": project.members.count()})
+                user_data = {
+                    "id": str(user.id),
+                    "name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                    "username": user.username,
+                    "email": user.email,
+                    "role": user.enterprise_role or user.role,
+                    "enterprise_role": user.enterprise_role,
+                    "designation": user.designation,
+                    "department": user.department,
+                    "status": user.status,
+                    "client_id": str(user.client_id) if user.client_id else None,
+                    "client_name": user.client.business_name if user.client else 'Platform',
+                    "is_online": getattr(user, 'is_online', False),
+                }
+                return Response({
+                    "message": f"Added '{user.username}' to project '{project.name}'.", 
+                    "member": user_data,
+                    "members_count": project.members.count()
+                })
             except User.DoesNotExist:
                 return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 

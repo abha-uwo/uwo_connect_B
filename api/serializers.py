@@ -278,19 +278,12 @@ class ContactListSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'phone_number', 'email', 'platform_id', 'stage', 'tags', 'bot_paused', 'is_archived', 'updated_at', 'created_at', 'preferred_channel')
 
     def get_preferred_channel(self, obj):
-        from .models import Conversation
-        # Fast indexed lookup (client_id, contact_platform_id)
-        convo = Conversation.objects.filter(client_id=obj.client_id, contact_platform_id=obj.platform_id).first()
-        if convo:
-            return convo.channel
-            
-        # Dynamic fallback for contacts with no conversation
         name = (obj.name or '').upper()
-        pid = obj.platform_id or ''
+        pid = (obj.platform_id or '').lower()
         
-        if 'INSTAGRAM' in name:
+        if 'INSTAGRAM' in name or pid.startswith('ig') or 'instagram' in pid:
             return 'INSTAGRAM'
-        elif 'FACEBOOK' in name:
+        elif 'FACEBOOK' in name or pid.startswith('fb') or 'facebook' in pid:
             return 'FACEBOOK'
         elif '@' in pid:
             return 'GMAIL'
@@ -409,13 +402,21 @@ class TaskSerializer(serializers.ModelSerializer):
 class WorkReportSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
+    employee = ObjectIdField(read_only=True)
     employee_name = serializers.ReadOnlyField(source='employee.username')
+    employee_full_name = serializers.SerializerMethodField()
     employee_department = serializers.ReadOnlyField(source='employee.department')
+    employee_role = serializers.ReadOnlyField(source='employee.enterprise_role')
 
     class Meta:
         model = WorkReport
         fields = '__all__'
         read_only_fields = ('client', 'employee', 'created_at')
+
+    def get_employee_full_name(self, obj):
+        if obj.employee:
+            return f"{obj.employee.first_name} {obj.employee.last_name}".strip() or obj.employee.username
+        return 'Team Member'
 
 
 class WorkApprovalSerializer(serializers.ModelSerializer):
@@ -433,6 +434,8 @@ class WorkApprovalSerializer(serializers.ModelSerializer):
 class TeamChannelSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
+    created_by = ObjectIdField(read_only=True)
+    members = serializers.SerializerMethodField()
     member_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -440,12 +443,23 @@ class TeamChannelSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('client', 'created_by', 'created_at')
 
+    def get_members(self, obj):
+        try:
+            return [str(m.id) for m in obj.members.all()]
+        except Exception:
+            return []
+
     def get_member_count(self, obj):
-        return obj.members.count()
+        try:
+            return obj.members.count()
+        except Exception:
+            return 0
 
 
 class TeamChatMessageSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
+    channel = ObjectIdField(read_only=True)
+    sender = ObjectIdField(read_only=True)
     sender_name = serializers.ReadOnlyField(source='sender.username')
     sender_role = serializers.ReadOnlyField(source='sender.enterprise_role')
 
@@ -458,16 +472,42 @@ class TeamChatMessageSerializer(serializers.ModelSerializer):
 class ProjectSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
+    owner = ObjectIdField(read_only=True)
     owner_name = serializers.ReadOnlyField(source='owner.username')
+    members = serializers.SerializerMethodField()
     task_count = serializers.SerializerMethodField()
+    members_details = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
         fields = '__all__'
         read_only_fields = ('client', 'owner', 'created_at', 'updated_at')
 
+    def get_members(self, obj):
+        try:
+            return [str(m.id) for m in obj.members.all()]
+        except Exception:
+            return []
+
     def get_task_count(self, obj):
-        return obj.tasks.count()
+        try:
+            return obj.tasks.count()
+        except Exception:
+            return 0
+
+    def get_members_details(self, obj):
+        try:
+            return [{
+                "id": str(m.id),
+                "username": m.username,
+                "name": f"{m.first_name} {m.last_name}".strip() or m.username,
+                "email": m.email,
+                "department": m.department,
+                "role": m.enterprise_role or m.role,
+                "is_online": getattr(m, 'is_online', False)
+            } for m in obj.members.all()]
+        except Exception:
+            return []
 
 
 class AttendanceSerializer(serializers.ModelSerializer):

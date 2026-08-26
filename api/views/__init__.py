@@ -45,9 +45,13 @@ from .client_intelligence_views import (
     ClientIntelligenceExportView
 )
 from .admin_channel_access_views import (
+    AdminGlobalConnectorsView,
     AdminChannelAccessMatrixView,
     AdminClientChannelAccessDetailView,
     AdminBulkChannelAccessView,
-    AdminChannelAuditLogView
+    AdminChannelAuditLogsView,
+    AdminChannelAuditLogsView as AdminChannelAuditLogView,
+    EffectiveConnectorsView,
+    GlobalConnectorsStatusView
 )
 

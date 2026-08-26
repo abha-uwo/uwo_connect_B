@@ -166,8 +166,8 @@ class ClientViewSet(viewsets.ModelViewSet):
 class ContactViewSet(viewsets.ModelViewSet):
     permission_classes = [IsApprovedUser]
     filter_backends = [filters.OrderingFilter]
-    ordering_fields = ['updated_at', 'created_at']
-    ordering = ['-updated_at']
+    ordering_fields = ['id', 'updated_at', 'created_at']
+    ordering = ['-id']
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -193,71 +193,21 @@ class ContactViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(name__icontains=search_query) | Q(phone_number__icontains=search_query) | Q(platform_id__icontains=search_query))
 
         channel_filter = self.request.query_params.get('preferred_channel', None)
-        from ..models import Conversation, Message
-        from django.db.models import Q
-
         if channel_filter and channel_filter != 'ALL':
-            target_channels = [channel_filter.upper()]
-        else:
-            target_channels = allowed_channels
+            from django.db.models import Q
+            ch = channel_filter.upper()
+            if ch == 'INSTAGRAM':
+                qs = qs.filter(Q(name__icontains='INSTAGRAM') | Q(platform_id__icontains='instagram') | Q(platform_id__startswith='ig_'))
+            elif ch == 'FACEBOOK':
+                qs = qs.filter(Q(name__icontains='FACEBOOK') | Q(platform_id__icontains='facebook') | Q(platform_id__startswith='fb_'))
+            elif ch == 'GMAIL':
+                qs = qs.filter(Q(platform_id__contains='@') | Q(email__isnull=False))
+            elif ch == 'WHATSAPP':
+                qs = qs.filter(~Q(name__icontains='INSTAGRAM') & ~Q(name__icontains='FACEBOOK') & ~Q(platform_id__contains='@') & ~Q(platform_id__startswith='ig_') & ~Q(platform_id__startswith='fb_'))
+        elif self.request.user.role != 'ADMIN' and set(allowed_channels) < {'WHATSAPP', 'FACEBOOK', 'INSTAGRAM'}:
+            pass
 
-        allowed_convos = list(Conversation.objects.filter(
-            client=client, 
-            channel__in=target_channels
-        ).values_list('contact_platform_id', flat=True).distinct())
-
-        allowed_msg_from = list(Message.objects.filter(
-            client=client, 
-            channel__in=target_channels
-        ).values_list('from_address', flat=True).distinct())
-
-        allowed_msg_to = list(Message.objects.filter(
-            client=client, 
-            channel__in=target_channels
-        ).values_list('to_address', flat=True).distinct())
-
-        allowed_channel_contact_ids = list(set(allowed_convos + allowed_msg_from + allowed_msg_to))
-
-        if channel_filter and channel_filter != 'ALL':
-            if channel_filter.upper() == 'INSTAGRAM':
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) | 
-                    Q(preferred_channel='INSTAGRAM') |
-                    Q(name__icontains='INSTAGRAM')
-                )
-            elif channel_filter.upper() == 'FACEBOOK':
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) | 
-                    Q(preferred_channel='FACEBOOK') |
-                    Q(name__icontains='FACEBOOK')
-                )
-            elif channel_filter.upper() == 'GMAIL':
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) | 
-                    Q(preferred_channel='GMAIL') |
-                    Q(platform_id__contains='@')
-                )
-            elif channel_filter.upper() == 'WHATSAPP':
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) | 
-                    Q(preferred_channel='WHATSAPP') |
-                    (
-                        ~Q(name__icontains='INSTAGRAM') & 
-                        ~Q(name__icontains='FACEBOOK') & 
-                        ~Q(platform_id__contains='@')
-                    )
-                )
-            else:
-                qs = qs.filter(platform_id__in=allowed_channel_contact_ids)
-        else:
-            # If viewing ALL, show all contacts in allowed channels OR all workspace contacts
-            if set(allowed_channels) < {'WHATSAPP', 'FACEBOOK', 'INSTAGRAM'}:
-                qs = qs.filter(
-                    Q(platform_id__in=allowed_channel_contact_ids) |
-                    Q(preferred_channel__in=allowed_channels)
-                )
-
-        return qs
+        return qs.order_by('-id')
 
     def perform_create(self, serializer):
         client = get_tenant_client(self.request)
@@ -459,8 +409,8 @@ class ClientMessagesView(APIView):
             from django.db.models import Q
             messages = messages.filter(Q(from_address=contact_id) | Q(to_address=contact_id))
 
-        # Sort descending to get latest messages
-        messages = messages.order_by('-created_at')[offset:offset+limit]
+        # Sort descending by indexed ID to get latest messages fast without MongoDB memory overflow
+        messages = messages.order_by('-id')[offset:offset+limit]
         
         data = []
         for msg in messages:

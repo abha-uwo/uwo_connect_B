@@ -1590,10 +1590,77 @@ class Invoice(models.Model):
         return f"{self.invoice_number} ({self.currency} {self.total})"
 
 
+class GlobalConnector(models.Model):
+    CATEGORY_CHOICES = [
+        ('CORE', 'Core Messaging'),
+        ('MESSAGING', 'Social & Messaging'),
+        ('EMAIL', 'Email & Productivity'),
+        ('STORAGE', 'Cloud Storage'),
+        ('CRM', 'CRM & Pipeline'),
+        ('MEDIA', 'Media & Content'),
+        ('CONNECTOR', 'Other Connector'),
+    ]
+
+    connector_key = models.CharField(max_length=50, unique=True, db_index=True)
+    name = models.CharField(max_length=100)
+    short_name = models.CharField(max_length=50, blank=True, default='')
+    category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, default='MESSAGING')
+    is_active = models.BooleanField(default=True, db_index=True)
+    is_core = models.BooleanField(default=False)
+    icon_key = models.CharField(max_length=50, blank=True, default='')
+    description = models.TextField(blank=True, default='')
+    scheduled_live_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.CharField(max_length=255, default='Super Admin')
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-is_core', 'name']
+
+    def __str__(self):
+        status_str = "ACTIVE" if self.is_active else "INACTIVE"
+        return f"{self.name} ({self.connector_key}) - {status_str}"
+
+
+class ClientConnectorAccess(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='connector_accesses')
+    connector_key = models.CharField(max_length=50, db_index=True)
+    is_enabled = models.BooleanField(default=True, db_index=True)
+    updated_by = models.CharField(max_length=255, default='Admin')
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('client', 'connector_key')
+        ordering = ['client', 'connector_key']
+
+    def __str__(self):
+        return f"{self.client.business_name} -> {self.connector_key}: {'ENABLED' if self.is_enabled else 'DISABLED'}"
+
+
+class TeamMemberConnectorAccess(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='team_connector_accesses')
+    team_member = models.ForeignKey(User, on_delete=models.CASCADE, related_name='connector_accesses')
+    connector_key = models.CharField(max_length=50, db_index=True)
+    is_enabled = models.BooleanField(default=True, db_index=True)
+    updated_by = models.CharField(max_length=255, default='Admin')
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('client', 'team_member', 'connector_key')
+        ordering = ['client', 'team_member', 'connector_key']
+
+    def __str__(self):
+        return f"{self.team_member.username} ({self.client.business_name}) -> {self.connector_key}: {'ALLOWED' if self.is_enabled else 'REVOKED'}"
+
+
 class ChannelAuditLog(models.Model):
     ACTION_CHOICES = [
-        ('ACCESS_GRANTED', 'Access Granted'),
-        ('ACCESS_REVOKED', 'Access Revoked'),
+        ('GLOBAL_ACTIVATED', 'Global Connector Activated'),
+        ('GLOBAL_DEACTIVATED', 'Global Connector Deactivated'),
+        ('ACCESS_GRANTED', 'Client Access Granted'),
+        ('ACCESS_REVOKED', 'Client Access Revoked'),
         ('BULK_GRANTED', 'Bulk Access Granted'),
         ('BULK_REVOKED', 'Bulk Access Revoked'),
         ('MEMBER_ASSIGNED', 'Member Channel Assigned'),
@@ -1601,7 +1668,10 @@ class ChannelAuditLog(models.Model):
     ]
 
     admin_user = models.CharField(max_length=255, default='Admin')
-    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='channel_audit_logs')
+    client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='channel_audit_logs')
+    client_name = models.CharField(max_length=255, blank=True, default='')
+    team_member = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='channel_audit_logs')
+    team_member_name = models.CharField(max_length=255, blank=True, default='')
     channel = models.CharField(max_length=50) # whatsapp, facebook, instagram, etc.
     action = models.CharField(max_length=50, choices=ACTION_CHOICES)
     previous_state = models.JSONField(default=dict, blank=True)
@@ -1613,6 +1683,7 @@ class ChannelAuditLog(models.Model):
         ordering = ['-timestamp']
 
     def __str__(self):
-        return f"[{self.timestamp}] {self.admin_user} -> {self.client.business_name} ({self.channel}): {self.action}"
+        client_desc = self.client.business_name if self.client else (self.client_name or 'Global')
+        return f"[{self.timestamp}] {self.admin_user} -> {client_desc} ({self.channel}): {self.action}"
 
 
