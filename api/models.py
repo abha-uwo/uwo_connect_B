@@ -74,12 +74,12 @@ class Client(models.Model):
     api_key = models.CharField(max_length=100, null=True, blank=True, unique=True)
     white_label_name = models.CharField(max_length=100, null=True, blank=True)
     white_label_domain = models.CharField(max_length=100, null=True, blank=True)
-    white_label_logo = models.CharField(max_length=255, null=True, blank=True)
+    white_label_logo = models.TextField(null=True, blank=True)
     
     # Invoice & Branding Settings
     invoice_prefix = models.CharField(max_length=20, default='INV')
     invoice_next_number = models.IntegerField(default=1001)
-    company_logo_url = models.CharField(max_length=500, null=True, blank=True)
+    company_logo_url = models.TextField(null=True, blank=True)
     tax_id_gstin = models.CharField(max_length=100, null=True, blank=True)
     invoice_default_notes = models.TextField(null=True, blank=True)
     payment_terms = models.TextField(null=True, blank=True)
