@@ -612,6 +612,7 @@ class ClientIntelligenceListView(APIView):
                 'user_id': str(primary_user['id']) if primary_user else None,
                 'phone_number': client.phone_number or client.whatsapp_phone_number_id or '',
                 'address': client.address or '',
+                'company_logo_url': client.company_logo_url or client.white_label_logo or '',
                 'created_at': client.created_at.isoformat() if client.created_at else None,
                 'created_date_formatted': client.created_at.strftime('%b %d, %Y') if client.created_at else '—',
                 'plan': client.plan or 'GROWTH',
@@ -1219,6 +1220,7 @@ class ClientIntelligenceActionView(APIView):
             client.business_name = request.data.get('business_name', client.business_name)
             client.phone_number = request.data.get('phone_number', client.phone_number)
             client.address = request.data.get('address', client.address)
+            client.company_logo_url = request.data.get('company_logo_url', client.company_logo_url)
             client.plan = request.data.get('plan', client.plan)
             client.status = request.data.get('status', client.status)
             client.save()
