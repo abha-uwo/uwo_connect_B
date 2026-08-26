@@ -344,18 +344,20 @@ class AuthService:
 
     @staticmethod
     def forgot_password_send_otp(email):
-        import random
+        import secrets
         from ..models import PasswordResetOTP, User
         from django.core.mail import send_mail
         from django.conf import settings
 
         if not email:
-            return {"message": "Email is required", "status_code": 400}
+            return {"message": "Email is required.", "status_code": 400}
         
+        email = email.lower().strip()
         if not UserRepository.filter_users(email=email).exists():
-            return {"message": "User with this email does not exist", "status_code": 404}
+            return {"message": "User with this email does not exist.", "status_code": 404}
         
-        otp = f"{random.randint(100000, 999999)}"
+        # Cryptographically secure 6-digit OTP generation
+        otp = f"{secrets.randbelow(900000) + 100000}"
         PasswordResetOTPRepository.filter_passwordresetotps(email=email).delete()
         PasswordResetOTPRepository.create_passwordresetotp(email=email, otp=otp)
         
@@ -400,8 +402,8 @@ class AuthService:
                 recipient_list=[email],
                 html_message=html_body
             )
-            msg = f"OTP sent to your email successfully (Test Code: {otp})"
-            return {"message": msg, "status_code": 200}
+            # Secure message: OTP is NEVER returned in the HTTP response payload
+            return {"message": "A 6-digit OTP code has been sent to your registered email.", "status_code": 200}
         except Exception as e:
             return {"message": f"Failed to send email: {str(e)}", "status_code": 500}
 
@@ -412,39 +414,53 @@ class AuthService:
         from ..models import PasswordResetOTP
         
         if not email or not otp:
-            return {"message": "Email and OTP are required", "status_code": 400}
+            return {"message": "Email and OTP are required.", "status_code": 400}
         
+        email = email.lower().strip()
+        otp = str(otp).strip()
+
         try:
             otp_record = PasswordResetOTPRepository.filter_passwordresetotps(email=email, otp=otp).latest('created_at')
         except PasswordResetOTP.DoesNotExist:
-            return {"message": "Invalid OTP", "status_code": 400}
+            return {"message": "Invalid OTP. Please check the code sent to your email.", "status_code": 400}
         
         now = timezone.now()
         if now - otp_record.created_at > timedelta(minutes=15):
             otp_record.delete()
-            return {"message": "OTP has expired", "status_code": 400}
+            return {"message": "OTP has expired. Please request a new code.", "status_code": 400}
             
         otp_record.is_verified = True
         otp_record.save()
         
-        return {"message": "OTP verified successfully", "status_code": 200}
+        return {"message": "OTP verified successfully.", "status_code": 200}
 
     @staticmethod
     def forgot_password_reset(email, password):
+        from django.utils import timezone
+        from datetime import timedelta
         from ..models import PasswordResetOTP, User
         
         if not email or not password:
-            return {"message": "Email and password are required", "status_code": 400}
+            return {"message": "Email and password are required.", "status_code": 400}
             
-        verified_otp = PasswordResetOTPRepository.filter_passwordresetotps(email=email, is_verified=True).exists()
-        if not verified_otp:
-            return {"message": "OTP not verified yet", "status_code": 400}
+        email = email.lower().strip()
+        
+        # Verify valid OTP within 15-minute window exists and is verified
+        otp_records = PasswordResetOTPRepository.filter_passwordresetotps(email=email, is_verified=True)
+        if not otp_records.exists():
+            return {"message": "OTP has not been verified yet or has expired.", "status_code": 400}
+            
+        latest_otp = otp_records.latest('created_at')
+        if timezone.now() - latest_otp.created_at > timedelta(minutes=15):
+            otp_records.delete()
+            return {"message": "Reset window has expired. Please request a new OTP.", "status_code": 400}
             
         try:
             user = UserRepository.get_user(email=email)
             user.set_password(password)
             user.save()
+            # Clean up all OTP records for this email immediately
             PasswordResetOTPRepository.filter_passwordresetotps(email=email).delete()
-            return {"message": "Password reset successfully", "status_code": 200}
+            return {"message": "Password reset successfully. You can now log in with your new password.", "status_code": 200}
         except User.DoesNotExist:
-            return {"message": "User not found", "status_code": 404}
+            return {"message": "User account not found.", "status_code": 404}

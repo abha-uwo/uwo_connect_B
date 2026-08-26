@@ -48,11 +48,31 @@ if not firebase_admin._apps:
     except Exception as e:
         print(f"[WARNING] Firebase Admin init warning: {e}")
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-gUXYFgMLdUxheQmX8fqOUW8kvpv2zb_3_kYLw3sD7vz7qQ-Q_BZ8ILoRKcltpgLT2-U')
+# SECURITY: Load secret key from environment, fallback to dev key only in DEBUG mode
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if os.getenv('DEBUG', 'True') == 'True':
+        SECRET_KEY = 'django-insecure-dev-local-key-change-in-production'
+    else:
+        raise ValueError("CRITICAL: SECRET_KEY environment variable is required in production.")
 
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = ['*']
+
+# Host header validation
+allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '')
+if allowed_hosts_env:
+    ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
+elif DEBUG:
+    ALLOWED_HOSTS = ['*']
+else:
+    ALLOWED_HOSTS = [
+        'localhost',
+        '127.0.0.1',
+        'uwoconnect.aisa24.com',
+        '.aisa24.com',
+        '.run.app',
+        '.azurewebsites.net',
+    ]
 
 # Application definition
 INSTALLED_APPS = [
@@ -118,10 +138,14 @@ MIGRATION_MODULES = {
     'sessions': 'mongo_migrations.sessions',
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS Configuration: Enforce explicit allowed origins for CASA security compliance
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL', 'True').lower() in ('true', '1') if DEBUG else False
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.run\.app$",
+    r"^https://.*\.aisa24\.com$",
+    r"^https://.*\.azurewebsites\.net$",
+    r"^https://.*\.vercel\.app$",
 ]
 CORS_ALLOWED_ORIGINS = [
     'https://uwoconnect.aisa24.com',
@@ -134,7 +158,7 @@ CORS_ALLOWED_ORIGINS = [
     'http://192.168.29.228:3000',
 ]
 
-# CSRF trusted origins â€” required for POST requests in production (DEBUG=False)
+# CSRF trusted origins — required for POST requests in production (DEBUG=False)
 CSRF_TRUSTED_ORIGINS = [
     'https://*.run.app',
     'https://uwoconnectforb-743978421487.asia-south1.run.app',
@@ -145,14 +169,20 @@ CSRF_TRUSTED_ORIGINS = [
     'https://*.azurewebsites.net',
     'https://*.azurestaticapps.net',
     'https://*.vercel.app',
-    'https://uwoconnect.aisa24.com',   # âœ… Live frontend domain
-    'https://*.aisa24.com',            # âœ… Wildcard for all subdomains
+    'https://uwoconnect.aisa24.com',
+    'https://*.aisa24.com',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:8080',
     'http://192.168.29.228:3000',
 ]
+
+# Security Headers & Hardening for CASA Compliance
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = 'same-origin'
 
 ROOT_URLCONF = 'core.urls'
 
@@ -178,13 +208,24 @@ CHANNEL_LAYERS = {
     },
 }
 
-# Database â€” MongoDB Atlas via django-mongodb-backend
+# Database — MongoDB Atlas via django-mongodb-backend
 DEFAULT_MONGO_URI = 'mongodb+srv://admin_db_user:admin%40123@cluster0.drmnlav.mongodb.net/?appName=Cluster0&tlsAllowInvalidCertificates=true'
+mongo_uri = os.getenv('MONGODB_URI', DEFAULT_MONGO_URI)
+if not mongo_uri:
+    if DEBUG:
+        mongo_uri = 'mongodb://localhost:27017/'
+    else:
+        raise ValueError("CRITICAL: MONGODB_URI environment variable is required.")
+
+# In production mode, strip tlsAllowInvalidCertificates parameter if present
+if not DEBUG and 'tlsAllowInvalidCertificates=true' in mongo_uri:
+    mongo_uri = mongo_uri.replace('&tlsAllowInvalidCertificates=true', '').replace('tlsAllowInvalidCertificates=true&', '').replace('?tlsAllowInvalidCertificates=true', '')
+
 DATABASES = {
     'default': {
         'ENGINE': 'django_mongodb_backend',
         'NAME': os.getenv('MONGODB_DB_NAME', 'aisaconnect_db_v5'),
-        'HOST': os.getenv('MONGODB_URI', DEFAULT_MONGO_URI),
+        'HOST': mongo_uri,
         'CONN_MAX_AGE': 60,
     }
 }
