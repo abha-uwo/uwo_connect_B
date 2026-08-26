@@ -18,7 +18,8 @@ class Client(models.Model):
     phone_number = models.CharField(max_length=50, null=True, blank=True)
     address = models.TextField(null=True, blank=True)
     automation_enabled = models.BooleanField(default=True)
-    plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default='FREE')
+    plan = models.CharField(max_length=50, default='FREE')
+    assigned_plan = models.ForeignKey('Plan', on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_clients')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
     
     # Enablement Flags
@@ -1684,6 +1685,166 @@ class ChannelAuditLog(models.Model):
 
     def __str__(self):
         client_desc = self.client.business_name if self.client else (self.client_name or 'Global')
-        return f"[{self.timestamp}] {self.admin_user} -> {client_desc} ({self.channel}): {self.action}"
+
+# ==============================================================================
+# PLAN MANAGEMENT & FEATURE ENTITLEMENT SYSTEM MODELS
+# ==============================================================================
+
+class Feature(models.Model):
+    CATEGORY_CHOICES = [
+        ('COMMUNICATION', 'Communication Channels'),
+        ('CONNECTORS', 'Productivity & Cloud Connectors'),
+        ('MESSAGING', 'Messaging & Conversations'),
+        ('AI', 'AI & Intelligence'),
+        ('CRM', 'CRM & Leads'),
+        ('SALES', 'Sales, Invoicing & Documents'),
+        ('TEAM', 'Team & Operations'),
+        ('DOCUMENTS', 'Knowledge & Documents'),
+        ('REPORTING', 'Analytics & Reports'),
+        ('SETTINGS', 'Settings & Administration'),
+    ]
+
+    TYPE_CHOICES = [
+        ('BOOLEAN', 'Boolean (On / Off)'),
+        ('LIMIT', 'Limit Based (Configurable Count)'),
+        ('USAGE', 'Usage Based (Monthly Quota)'),
+        ('CONNECTOR', 'Connector / Integration'),
+        ('CHANNEL', 'Communication Channel'),
+        ('MODULE', 'Functional Module'),
+    ]
+
+    STATUS_CHOICES = [
+        ('ACTIVE', 'Active'),
+        ('INACTIVE', 'Inactive'),
+        ('DEPRECATED', 'Deprecated'),
+    ]
+
+    key = models.CharField(max_length=100, unique=True, db_index=True)
+    name = models.CharField(max_length=150)
+    description = models.TextField(blank=True, default='')
+    category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, default='COMMUNICATION', db_index=True)
+    feature_type = models.CharField(max_length=30, choices=TYPE_CHOICES, default='BOOLEAN')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE', db_index=True)
+    icon = models.CharField(max_length=50, default='Box')
+    default_enabled = models.BooleanField(default=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['category', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.key}) [{self.category}]"
+
+
+class Plan(models.Model):
+    STATUS_CHOICES = [
+        ('ACTIVE', 'Active'),
+        ('INACTIVE', 'Inactive'),
+        ('ARCHIVED', 'Archived'),
+    ]
+
+    BILLING_CYCLE_CHOICES = [
+        ('MONTHLY', 'Monthly'),
+        ('QUARTERLY', 'Quarterly'),
+        ('YEARLY', 'Yearly'),
+        ('CUSTOM', 'Custom'),
+        ('ONE_TIME', 'One Time'),
+        ('NO_BILLING', 'No Billing / Free'),
+    ]
+
+    PLAN_TYPE_CHOICES = [
+        ('STANDARD', 'Standard Tier'),
+        ('CUSTOM', 'Custom Tailored'),
+        ('AGENCY', 'Agency White-Label'),
+        ('ENTERPRISE', 'Enterprise SLA'),
+    ]
+
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(max_length=120, unique=True, blank=True)
+    description = models.TextField(blank=True, default='')
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    currency = models.CharField(max_length=10, default='INR')
+    billing_cycle = models.CharField(max_length=30, choices=BILLING_CYCLE_CHOICES, default='MONTHLY')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE', db_index=True)
+    plan_type = models.CharField(max_length=30, choices=PLAN_TYPE_CHOICES, default='STANDARD')
+    display_order = models.IntegerField(default=0)
+    is_default = models.BooleanField(default=False)
+    badge_text = models.CharField(max_length=50, blank=True, default='')
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['display_order', 'price', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.currency} {self.price}/{self.billing_cycle}) - {self.status}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+
+class PlanFeature(models.Model):
+    plan = models.ForeignKey(Plan, on_delete=models.CASCADE, related_name='plan_features')
+    feature = models.ForeignKey(Feature, on_delete=models.CASCADE, related_name='plan_features')
+    enabled = models.BooleanField(default=True, db_index=True)
+    limit_value = models.IntegerField(null=True, blank=True, default=None) # null = unlimited / not applicable
+    limit_type = models.CharField(max_length=50, blank=True, default='') # e.g. "count", "monthly_quota", "unlimited"
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('plan', 'feature')
+        ordering = ['plan', 'feature__category', 'feature__name']
+
+    def __str__(self):
+        limit_str = f" [Limit: {self.limit_value}]" if self.limit_value is not None else " [Unlimited]"
+        return f"{self.plan.name} -> {self.feature.key}: {'ENABLED' if self.enabled else 'DISABLED'}{limit_str}"
+
+
+class ClientFeatureOverride(models.Model):
+    OVERRIDE_TYPE_CHOICES = [
+        ('ADD', 'Custom Addition (+)'),
+        ('REMOVE', 'Custom Restriction (-)'),
+        ('LIMIT_OVERRIDE', 'Limit Override'),
+    ]
+
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='feature_overrides')
+    feature = models.ForeignKey(Feature, on_delete=models.CASCADE, related_name='client_overrides')
+    override_type = models.CharField(max_length=20, choices=OVERRIDE_TYPE_CHOICES, default='ADD')
+    limit_value = models.IntegerField(null=True, blank=True, default=None)
+    assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_feature_overrides')
+    assigned_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ('client', 'feature')
+        ordering = ['client', 'feature__category', 'feature__name']
+
+    def __str__(self):
+        return f"{self.client.business_name} -> {self.feature.key}: {self.override_type} ({self.limit_value})"
+
+
+class PlanAuditLog(models.Model):
+    action = models.CharField(max_length=100)
+    admin_user = models.CharField(max_length=255, default='Admin')
+    plan_name = models.CharField(max_length=100, blank=True, default='')
+    feature_name = models.CharField(max_length=100, blank=True, default='')
+    client_name = models.CharField(max_length=150, blank=True, default='')
+    previous_value = models.TextField(blank=True, default='')
+    new_value = models.TextField(blank=True, default='')
+    metadata = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f"[{self.timestamp}] {self.admin_user} - {self.action} (Plan: {self.plan_name}, Feature: {self.feature_name})"
+
 
 

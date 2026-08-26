@@ -538,11 +538,23 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
 class ConversationSerializer(serializers.ModelSerializer):
     id = ObjectIdField(read_only=True)
     client = ObjectIdField(read_only=True)
-    assigned_to_name = serializers.ReadOnlyField(source='assigned_to.username')
+    assigned_to_name = serializers.SerializerMethodField()
     assigned_to_avatar = serializers.SerializerMethodField()
-    locked_by_name = serializers.ReadOnlyField(source='locked_by.username')
+    locked_by_name = serializers.SerializerMethodField()
     contact_name = serializers.SerializerMethodField()
     contact_phone = serializers.SerializerMethodField()
+
+    def get_assigned_to_name(self, obj):
+        if obj.assigned_to:
+            full = f"{getattr(obj.assigned_to, 'first_name', '') or ''} {getattr(obj.assigned_to, 'last_name', '') or ''}".strip()
+            return full or getattr(obj.assigned_to, 'username', None) or getattr(obj.assigned_to, 'email', None)
+        return None
+
+    def get_locked_by_name(self, obj):
+        if obj.locked_by:
+            full = f"{getattr(obj.locked_by, 'first_name', '') or ''} {getattr(obj.locked_by, 'last_name', '') or ''}".strip()
+            return full or getattr(obj.locked_by, 'username', None) or getattr(obj.locked_by, 'email', None)
+        return None
 
     class Meta:
         model = Conversation

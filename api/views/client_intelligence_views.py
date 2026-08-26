@@ -1200,8 +1200,8 @@ class ClientIntelligenceActionView(APIView):
             )
             return Response({'message': f'Client account status set to {new_status}.'})
 
-        elif action == 'UPDATE_PLAN':
-            new_plan = request.data.get('plan', 'GROWTH').upper()
+        elif action in ['UPDATE_PLAN', 'ASSIGN_PLAN']:
+            new_plan = request.data.get('plan', 'Growth')
             old_plan = client.plan
             client.plan = new_plan
             client.save()
@@ -1211,18 +1211,20 @@ class ClientIntelligenceActionView(APIView):
                 client.business_name,
                 'SUBSCRIPTION_PLAN',
                 f'UPDATE_PLAN -> {new_plan}',
-                old_plan,
-                new_plan
+                str(old_plan),
+                str(new_plan)
             )
-            return Response({'message': f'Plan updated to {new_plan}.'})
+            return Response({'message': f'Plan updated to {new_plan} for {client.business_name}.', 'plan': new_plan})
 
         elif action == 'EDIT_PROFILE':
             client.business_name = request.data.get('business_name', client.business_name)
             client.phone_number = request.data.get('phone_number', client.phone_number)
             client.address = request.data.get('address', client.address)
             client.company_logo_url = request.data.get('company_logo_url', client.company_logo_url)
-            client.plan = request.data.get('plan', client.plan)
-            client.status = request.data.get('status', client.status)
+            if 'plan' in request.data:
+                client.plan = request.data.get('plan')
+            if 'status' in request.data:
+                client.status = request.data.get('status')
             client.save()
 
             log_admin_intelligence_action(
@@ -1233,6 +1235,7 @@ class ClientIntelligenceActionView(APIView):
                 '',
                 f"{client.business_name} | {client.plan} | {client.status}"
             )
+            return Response({'message': f'Profile and plan for {client.business_name} updated successfully.', 'plan': client.plan})
         elif action == 'CHANGE_PASSWORD':
             new_password = request.data.get('new_password')
             if not new_password:

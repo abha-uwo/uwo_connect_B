@@ -202,12 +202,15 @@ class ProfileView(APIView):
             effective_map = {}
 
         return Response({
+            **user_data,
             "client": client_data,
             "user": user_data,
             "global_connectors": global_map,
             "effective_connectors": effective_map,
-            **user_data
         })
+
+    def put(self, request):
+        return self.patch(request)
 
     def patch(self, request):
         if not request.user.client:
@@ -216,9 +219,13 @@ class ProfileView(APIView):
         # Update User fields if provided
         user = request.user
         if 'name' in request.data:
-            name_parts = request.data['name'].split(' ', 1)
+            name_parts = str(request.data['name']).strip().split(' ', 1)
             user.first_name = name_parts[0]
             user.last_name = name_parts[1] if len(name_parts) > 1 else ''
+            user.save()
+
+        if 'phone_number' in request.data:
+            user.phone_number = request.data['phone_number']
             user.save()
 
         # Validate channel permissions if channel configurations are being updated
@@ -258,7 +265,6 @@ class ProfileView(APIView):
                              "access_token": access_token
                          }
                          res = requests.post(sub_url, data=sub_payload, timeout=10)
-                         print(f"\nfrom ..repositories.campaign_repository import TemplateRepository\nfrom ..repositories.campaign_repository import CampaignRepository\nfrom ..repositories.system_repository import SystemRepository\nfrom ..repositories.message_repository import SupportMessageRepository\nfrom ..repositories.client_repository import ClientRepository\nfrom ..repositories.user_repository import TeamInviteRepository\nfrom ..repositories.user_repository import UserRepository\nfrom ..repositories.automation_repository import WorkflowRepository\nfrom ..repositories.message_repository import TeamMessageRepository\nfrom ..repositories.message_repository import MessageRepository\nfrom ..repositories.knowledge_repository import KnowledgeRepository\nfrom ..repositories.automation_repository import AutomationRepository\nfrom ..repositories.contact_repository import ContactRepository\n\n[Meta API] Facebook Page {page_id} Webhook Subscription Response: {res.status_code} {res.text}\n")
                      except Exception as e:
                          print(f"Error subscribing Facebook page {page_id}: {str(e)}")
             
@@ -279,11 +285,19 @@ class ProfileView(APIView):
                                     "access_token": access_token
                                 }
                                 res = requests.post(sub_url, data=sub_payload, timeout=10)
-                                print(f"\n[Meta API] Instagram linked Facebook Page {page_id} Webhook Subscription Response: {res.status_code} {res.text}\n")
                     except Exception as e:
                          print(f"Error subscribing Instagram linked page: {str(e)}")
                          
-            return Response(serializer.data)
+            user_serializer = UserSerializer(request.user)
+            user_data = user_serializer.data
+            client_data = dict(serializer.data)
+            return Response({
+                **user_data,
+                "message": "Profile updated successfully",
+                "client": client_data,
+                "user": user_data,
+                **client_data,
+            })
         return Response(serializer.errors, status=400)
 
 from ..models import User, Client, Automation, Workflow, GlobalSetting

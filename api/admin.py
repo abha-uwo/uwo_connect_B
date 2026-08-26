@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import User, Client, Automation, Workflow, Message, Log, Guide, GuideSection, GuideStep, GuideProgress
+from .models import User, Client, Automation, Workflow, Message, Log, Guide, GuideSection, GuideStep, GuideProgress, Feature, Plan, PlanFeature, ClientFeatureOverride, PlanAuditLog
 
 class CustomUserAdmin(UserAdmin):
     list_display = ('username', 'email', 'role', 'status', 'is_staff')
@@ -35,4 +35,11 @@ class GuideStepAdmin(admin.ModelAdmin):
     list_filter = ('step_type', 'section__guide')
 
 admin.site.register(GuideProgress)
+
+# Register new entitlement models
+admin.site.register(Feature)
+admin.site.register(Plan)
+admin.site.register(PlanFeature)
+admin.site.register(ClientFeatureOverride)
+admin.site.register(PlanAuditLog)
 

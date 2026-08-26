@@ -5,25 +5,20 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
 
-from api.models import PaymentOrder, Client, Log
+from api.models import PaymentOrder, Client, Log, Plan
 from api.services.razorpay_service import RazorpayService
+from django.db.models import Q
 
 logger = logging.getLogger(__name__)
 
-# Plan Pricing in INR
-PLAN_PRICES = {
-    'STARTER': {
-        'MONTHLY': 3999.00,
-        'ANNUAL': 38388.00,
-    },
-    'GROWTH': {
-        'MONTHLY': 7999.00,
-        'ANNUAL': 76788.00,
-    },
-    'ENTERPRISE': {
-        'MONTHLY': 23999.00,
-        'ANNUAL': 230388.00,
-    }
+# Dynamic Plan Pricing in INR fallback
+DEFAULT_PLAN_PRICES = {
+    'FREE': {'MONTHLY': 0.00, 'ANNUAL': 0.00},
+    'STARTER': {'MONTHLY': 999.00, 'ANNUAL': 9590.00},
+    'PROFESSIONAL': {'MONTHLY': 2999.00, 'ANNUAL': 28790.00},
+    'GROWTH': {'MONTHLY': 2999.00, 'ANNUAL': 28790.00},
+    'ENTERPRISE': {'MONTHLY': 9999.00, 'ANNUAL': 95990.00},
+    'CUSTOM': {'MONTHLY': 4999.00, 'ANNUAL': 47990.00}
 }
 
 class CreatePaymentOrderView(APIView):
@@ -34,15 +29,41 @@ class CreatePaymentOrderView(APIView):
         if not user.client:
             return Response({'error': 'No client associated with user'}, status=status.HTTP_400_BAD_REQUEST)
 
-        plan = request.data.get('plan', 'GROWTH').upper()
+        raw_plan = request.data.get('plan', 'Professional')
+        plan = str(raw_plan).strip()
         billing_cycle = request.data.get('billing_cycle', 'MONTHLY').upper()
-
-        if plan not in PLAN_PRICES:
-            return Response({'error': f'Invalid plan. Choose from {list(PLAN_PRICES.keys())}'}, status=status.HTTP_400_BAD_REQUEST)
         if billing_cycle not in ['MONTHLY', 'ANNUAL']:
             billing_cycle = 'MONTHLY'
 
-        amount = PLAN_PRICES[plan][billing_cycle]
+        # Look up dynamically in Plan model first
+        db_plan = Plan.objects.filter(status='ACTIVE').filter(Q(name__iexact=plan) | Q(slug__iexact=plan)).first()
+        if db_plan:
+            plan_name = db_plan.name
+            base_price = float(db_plan.price)
+            if billing_cycle == 'ANNUAL':
+                amount = base_price * 12 * 0.8
+            else:
+                amount = base_price
+        else:
+            plan_key = plan.upper()
+            if plan_key in DEFAULT_PLAN_PRICES:
+                plan_name = plan.capitalize()
+                amount = DEFAULT_PLAN_PRICES[plan_key][billing_cycle]
+            else:
+                plan_name = plan
+                amount = 2999.00  # Default fallback
+
+        # If free tier plan, upgrade immediately without payment gateway
+        if amount <= 0:
+            user.client.plan = plan_name
+            user.client.save()
+            return Response({
+                'order_id': f'free_{user.client.id}_{int(time.time())}',
+                'amount': 0,
+                'plan': plan_name,
+                'message': f'Switched to {plan_name} plan successfully.'
+            }, status=status.HTTP_200_OK)
+
         receipt_id = f"rcpt_{user.client.id}_{int(time.time())}"
 
         # Create Razorpay Order
@@ -53,7 +74,7 @@ class CreatePaymentOrderView(APIView):
             notes={
                 'client_id': user.client.id,
                 'user_email': user.email or '',
-                'plan': plan,
+                'plan': plan_name,
                 'billing_cycle': billing_cycle
             }
         )

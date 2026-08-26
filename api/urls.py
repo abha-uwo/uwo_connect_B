@@ -48,6 +48,7 @@ from .views import (
     AdminBulkChannelAccessView, AdminChannelAuditLogsView, AdminChannelAuditLogView,
     EffectiveConnectorsView, GlobalConnectorsStatusView
 )
+from .views.plan_management_views import FeatureViewSet, PlanViewSet, PlanFeatureViewSet, ClientFeatureOverrideViewSet, PlanAuditLogViewSet
 from api.views.zoho_views import ZohoConnectView, ZohoCallbackView, ZohoDisconnectView, ZohoTestLeadView
 
 from .views.sales_document_views import (
@@ -84,6 +85,11 @@ router.register(r'sales-document-templates', SalesDocumentTemplateViewSet, basen
 router.register(r'invoices', InvoiceViewSet, basename='invoice')
 router.register(r'quotations', SalesDocumentViewSet, basename='quotation')
 router.register(r'proposals', SalesDocumentViewSet, basename='proposal')
+router.register(r'features', FeatureViewSet, basename='feature')
+router.register(r'plans', PlanViewSet, basename='plan')
+router.register(r'plan-features', PlanFeatureViewSet, basename='plan-feature')
+router.register(r'client-feature-overrides', ClientFeatureOverrideViewSet, basename='client-feature-override')
+router.register(r'plan-audit-logs', PlanAuditLogViewSet, basename='plan-audit-log')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -201,9 +207,12 @@ urlpatterns = [
     path('admin/all-products/', SuperAdminProductsListView.as_view()),
     path('admin/global-search', SuperAdminGlobalSearchView.as_view(), name='super-admin-global-search'),
     path('admin/global-search/', SuperAdminGlobalSearchView.as_view()),
+    path('messages', ClientMessagesView.as_view(), name='client-messages'),
+    path('messages/', ClientMessagesView.as_view()),
     path('admin/automations', AdminAutomationsView.as_view(), name='admin-automations'),
     path('email/compose/', EmailComposeView.as_view(), name='email-compose'),
     path('admin/messages', AdminMessagesView.as_view(), name='admin-messages'),
+    path('admin/messages/', AdminMessagesView.as_view()),
     path('admin/users', AdminUsersView.as_view(), name='admin-users'),
     path('admin/users/<str:pk>', AdminUsersView.as_view(), name='admin-user-detail'),
     path('platform-assistant/', PlatformAssistantView.as_view(), name='platform-assistant'),
