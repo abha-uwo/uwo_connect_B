@@ -605,8 +605,13 @@ class ClientIntelligenceListView(APIView):
                 'id': cid,
                 'business_name': client.business_name or 'Unnamed Business',
                 'client_name': owner_name or client.business_name or 'N/A',
+                'owner_name': owner_name or client.business_name or 'N/A',
                 'email': owner_email,
+                'owner_email': owner_email,
+                'username': primary_user['username'] if primary_user else None,
+                'user_id': str(primary_user['id']) if primary_user else None,
                 'phone_number': client.phone_number or client.whatsapp_phone_number_id or '',
+                'address': client.address or '',
                 'created_at': client.created_at.isoformat() if client.created_at else None,
                 'created_date_formatted': client.created_at.strftime('%b %d, %Y') if client.created_at else '—',
                 'plan': client.plan or 'GROWTH',
@@ -950,6 +955,9 @@ class ClientIntelligenceDetailView(APIView):
                 'business_name': client.business_name,
                 'owner_name': owner_name,
                 'email': owner_email,
+                'username': primary_user.username if primary_user else None,
+                'user_id': str(primary_user.id) if primary_user else None,
+                'role': primary_user.role if primary_user else 'CLIENT',
                 'phone_number': client.phone_number or '',
                 'address': client.address or '',
                 'plan': client.plan,
@@ -957,6 +965,7 @@ class ClientIntelligenceDetailView(APIView):
                 'approval_status': approval_status,
                 'company_logo_url': client.company_logo_url,
                 'created_at': client.created_at.strftime('%b %d, %Y'),
+                'last_login': primary_user.last_login.strftime('%b %d, %Y, %I:%M %p') if (primary_user and primary_user.last_login) else None,
                 'last_active': client.updated_at.strftime('%b %d, %Y, %I:%M %p'),
                 'ai_enabled': client.ai_enabled,
                 'automation_enabled': client.automation_enabled,
@@ -1222,7 +1231,39 @@ class ClientIntelligenceActionView(APIView):
                 '',
                 f"{client.business_name} | {client.plan} | {client.status}"
             )
-            return Response({'message': 'Client profile updated successfully.'})
+        elif action == 'CHANGE_PASSWORD':
+            new_password = request.data.get('new_password')
+            if not new_password:
+                return Response({'error': 'new_password is required'}, status=status.HTTP_400_BAD_REQUEST)
+            c_users = User.objects.filter(client=client)
+            target_user = c_users.filter(role='CLIENT').first() or c_users.first()
+            if not target_user:
+                return Response({'error': 'No user account associated with this client'}, status=status.HTTP_404_NOT_FOUND)
+            target_user.set_password(new_password)
+            target_user.save()
+            log_admin_intelligence_action(
+                request,
+                client.business_name,
+                'CREDENTIALS',
+                f'CHANGE_PASSWORD for user: {target_user.username}',
+                '',
+                'Password updated by Super Admin'
+            )
+            return Response({'message': f'Password updated successfully for {target_user.username}.'})
+
+        elif action == 'DELETE_CLIENT':
+            biz_name = client.business_name
+            User.objects.filter(client=client).delete()
+            client.delete()
+            log_admin_intelligence_action(
+                request,
+                biz_name,
+                'CLIENT_LIFECYCLE',
+                f'DELETE_CLIENT: {biz_name}',
+                '',
+                'Client and associated users deleted by Admin'
+            )
+            return Response({'message': f'Client {biz_name} deleted successfully.'})
 
         return Response({'error': f'Unsupported action: {action}'}, status=status.HTTP_400_BAD_REQUEST)
 
