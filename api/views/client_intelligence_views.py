@@ -1190,6 +1190,13 @@ class ClientIntelligenceActionView(APIView):
             client.status = new_status
             client.save()
 
+            # Sync user-level status so login works correctly
+            c_users = User.objects.filter(client=client)
+            if new_status == 'ACTIVE':
+                c_users.update(status='APPROVED')
+            elif new_status == 'SUSPENDED':
+                c_users.update(status='SUSPENDED')
+
             log_admin_intelligence_action(
                 request,
                 client.business_name,
@@ -1224,7 +1231,16 @@ class ClientIntelligenceActionView(APIView):
             if 'plan' in request.data:
                 client.plan = request.data.get('plan')
             if 'status' in request.data:
-                client.status = request.data.get('status')
+                new_status = request.data.get('status', '').upper()
+                old_status = client.status
+                client.status = new_status
+                # Sync user-level status so login works correctly
+                if new_status != old_status:
+                    c_users = User.objects.filter(client=client)
+                    if new_status == 'ACTIVE':
+                        c_users.update(status='APPROVED')
+                    elif new_status == 'SUSPENDED':
+                        c_users.update(status='SUSPENDED')
             client.save()
 
             log_admin_intelligence_action(

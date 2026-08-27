@@ -1718,11 +1718,20 @@ class SuperAdminClientActionView(APIView):
             status_val = request.data.get('status')
 
             before = f"Name: {client.business_name}, Plan: {client.plan}, Status: {client.status}"
+            old_status = client.status
             if business_name: client.business_name = business_name
             if phone_number is not None: client.phone_number = phone_number
             if address is not None: client.address = address
             if plan: client.plan = plan
-            if status_val in ['ACTIVE', 'SUSPENDED', 'TRIAL']: client.status = status_val
+            if status_val in ['ACTIVE', 'SUSPENDED', 'TRIAL']:
+                client.status = status_val
+                # Sync user-level status so login works correctly
+                if status_val != old_status:
+                    c_users = User.objects.filter(client=client)
+                    if status_val == 'ACTIVE':
+                        c_users.update(status='APPROVED')
+                    elif status_val == 'SUSPENDED':
+                        c_users.update(status='SUSPENDED')
             client.save()
 
             after = f"Name: {client.business_name}, Plan: {client.plan}, Status: {client.status}"
