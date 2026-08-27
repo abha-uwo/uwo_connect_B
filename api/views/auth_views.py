@@ -298,6 +298,7 @@ class ProfileView(APIView):
                 "user": user_data,
                 **client_data,
             })
+        print("Profile validation errors:", serializer.errors)
         return Response(serializer.errors, status=400)
 
 from ..models import User, Client, Automation, Workflow, GlobalSetting

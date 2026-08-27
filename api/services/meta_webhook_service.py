@@ -53,9 +53,8 @@ class MetaWebhookService:
                             print(f"No client found for phone_number_id: {phone_number_id}")
                             continue
 
-                        if not client.automation_enabled:
-                            print(f"Automation disabled for client: {client.business_name}")
-                            continue
+                        # NOTE: We always store incoming messages regardless of automation_enabled.
+                        # automation_enabled only controls whether the AI bot sends an automated reply.
 
                         contacts = value.get('contacts') or []
                         contact_name = "Unknown"
@@ -115,8 +114,15 @@ class MetaWebhookService:
                                     body = (msg.get('interactive') or {}).get('button_reply', {}).get('title', '')
                                 elif i_type == 'list_reply':
                                     body = (msg.get('interactive') or {}).get('list_reply', {}).get('title', '')
+                            elif msg_type == 'reaction':
+                                emoji = (msg.get('reaction') or {}).get('emoji', '👍')
+                                body = f"{emoji} [Reaction]"
+                            elif msg_type in ['contacts', 'vcard']:
+                                body = "👤 [Contact Card]"
+                            elif msg_type == 'system':
+                                body = "ℹ️ [System Notification]"
                             elif msg_type == 'unsupported':
-                                body = "📎 [Unsupported WhatsApp Media / Format]"
+                                body = "📎 [Attachment / Media]"
                             elif not body:
                                 body = f"📎 [{msg_type.capitalize()}]"
                             
@@ -130,6 +136,7 @@ class MetaWebhookService:
                                 }
                             )
 
+                            # Always store the message — dashboard must show all messages
                             MessageRepository.create_message(
                                 client=client,
                                 channel='WHATSAPP',
@@ -184,7 +191,8 @@ class MetaWebhookService:
                                 except Exception as _ze:
                                     logger.warning("Zoho WA hook error: %s", _ze)
 
-                            if body:
+                            # Only run AI bot automation if enabled AND bot not paused for this contact
+                            if body and client.automation_enabled:
                                 if not contact.bot_paused:
                                     MetaWebhookService.handle_automations_whatsapp(client, from_number, body, phone_number_id)
                                 else:
@@ -230,9 +238,8 @@ class MetaWebhookService:
                     logger.warning(f"No client found for {platform} recipient ID: {recipient_id}")
                     continue
 
-                if not client.automation_enabled:
-                    print(f"Automation disabled for client: {client.business_name}")
-                    continue
+                # NOTE: Always store incoming messages regardless of automation_enabled.
+                # automation_enabled only controls whether the AI bot sends an automated reply.
 
                 messaging = entry.get('messaging', [])
                 for event in messaging:
@@ -348,7 +355,8 @@ class MetaWebhookService:
                     except Exception as _ode:
                         logger.warning("OneDrive FB/IG hook error: %s", _ode)
 
-                    if body:
+                    # Only run AI bot automation if enabled AND bot not paused for this contact
+                    if body and client.automation_enabled:
                         if not contact.bot_paused:
                             MetaWebhookService.handle_automations_fb_ig(client, platform, sender_id, body)
                         else:

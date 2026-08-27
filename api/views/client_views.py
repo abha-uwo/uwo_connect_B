@@ -167,7 +167,7 @@ class ContactViewSet(viewsets.ModelViewSet):
     permission_classes = [IsApprovedUser]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['id', 'updated_at', 'created_at']
-    ordering = ['-id']
+    ordering = ['-updated_at']
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -209,7 +209,7 @@ class ContactViewSet(viewsets.ModelViewSet):
         elif self.request.user.role != 'ADMIN' and set(allowed_channels) < {'WHATSAPP', 'FACEBOOK', 'INSTAGRAM'}:
             pass
 
-        return qs.order_by('-id')
+        return qs.order_by('-updated_at')
 
     def perform_create(self, serializer):
         client = get_tenant_client(self.request)

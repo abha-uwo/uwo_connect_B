@@ -20,7 +20,7 @@ class MessageRepository:
     @staticmethod
     def create_message(**kwargs):
         msg = Message.objects.create(**kwargs)
-        from ..models import Contact
+        from ..models import Contact, Conversation
         from django.utils import timezone
         
         # Touch the contact's updated_at so it rises to the top of the inbox list
@@ -28,6 +28,49 @@ class MessageRepository:
         platform_id = msg.from_address if msg.message_type == 'INCOMING' else msg.to_address
         if client and platform_id:
             Contact.objects.filter(client=client, platform_id=platform_id).update(updated_at=timezone.now())
+            
+            # Create or update Conversation
+            convo, created = Conversation.objects.get_or_create(
+                client=client,
+                contact_platform_id=platform_id,
+                channel=msg.channel or 'WHATSAPP',
+                defaults={
+                    'contact': Contact.objects.filter(client=client, platform_id=platform_id).first(),
+                    'last_message_summary': msg.body,
+                    'last_message_at': msg.created_at or timezone.now()
+                }
+            )
+            if not created:
+                convo.last_message_summary = msg.body
+                convo.last_message_at = msg.created_at or timezone.now()
+                if not convo.contact:
+                    convo.contact = Contact.objects.filter(client=client, platform_id=platform_id).first()
+                convo.save()
+
+            # Real-time WebSocket event broadcast to inbox group
+            try:
+                from channels.layers import get_channel_layer
+                from asgiref.sync import async_to_sync
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(
+                        f"inbox_{client.id}",
+                        {
+                            "type": "new_message",
+                            "message": {
+                                "id": str(msg.id),
+                                "from_address": msg.from_address,
+                                "to_address": msg.to_address,
+                                "body": msg.body,
+                                "channel": msg.channel,
+                                "message_type": msg.message_type,
+                                "status": msg.status,
+                                "created_at": str(msg.created_at or timezone.now())
+                            }
+                        }
+                    )
+            except Exception as _ws_err:
+                pass
             
         return msg
 
